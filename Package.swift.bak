@@ -1,0 +1,4 @@
+// swift-tools-version: 5.9
+// 이 Package.swift는 사용되지 않습니다. NotchInteraction.xcodeproj를 사용하세요.
+import PackageDescription
+let package = Package(name: "NotchInteraction", targets: [])
