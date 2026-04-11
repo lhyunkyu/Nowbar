@@ -12,25 +12,19 @@ struct NowBarOverlayView: View {
 
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
-    var isHover: Bool    { state.proximity > 0.08 }
+    // proximity가 1.0 (노치 안)이거나 확장됐을 때만 표시
+    var isHover: Bool    { state.proximity > 0.5 }
     var isExpanded: Bool { state.isExpanded }
     var shouldShow: Bool { isHover || isExpanded }
 
-    var pillWidth: CGFloat  { isExpanded ? 480 : (nowPlaying.title.isEmpty ? 240 : 320) }
-    var pillHeight: CGFloat { isExpanded ? 120 : 44 }
+    var pillWidth: CGFloat    { isExpanded ? 480 : (nowPlaying.title.isEmpty ? 240 : 320) }
+    var pillHeight: CGFloat   { isExpanded ? 120 : 44 }
     var cornerRadius: CGFloat { dropProgress * 22 }
     var contentOpacity: Double { Double(min(1.0, dropProgress * 1.8)) }
 
     var body: some View {
         ZStack(alignment: .top) {
-
-            // 노치 연결 목
-            if dropProgress > 0 {
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(Color.black)
-                    .frame(width: 56, height: 10)
-                    .opacity(Double(dropProgress))
-            }
+            // 연결 목 제거 — 노치랑 자연스럽게 이어지도록 pill만 표시
 
             ZStack {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -78,10 +72,10 @@ struct NowBarOverlayView: View {
                 HapticManager.shared.playNowBarAppear()
                 dropProgress = 0.0; offsetY = -8
                 withAnimation(.spring(response: 0.38, dampingFraction: 0.58)) {
-                    dropProgress = 1.0; offsetY = 8
+                    dropProgress = 1.0; offsetY = 6
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.42)) { offsetY = 4 }
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.42)) { offsetY = 3 }
                 }
             } else if !show && wasShowing {
                 withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
