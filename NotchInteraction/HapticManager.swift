@@ -1,5 +1,5 @@
 import AppKit
-
+ // MARK: 햅틱 피드백 영역
 class HapticManager {
     static let shared = HapticManager()
     private init() {}

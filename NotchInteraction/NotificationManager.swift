@@ -55,6 +55,9 @@ class NotificationManager: NSObject, ObservableObject {
     private var btDisconnectMap: [ObjectIdentifier: IOBluetoothUserNotification] = [:]
     private var initialDevices: Set<String> = []
     private var btReady = false
+    // 디바운싱: 기기 주소별 마지막 이벤트 시각
+    private var btLastEventTime: [String: Date] = [:]
+    private let btDebounceInterval: TimeInterval = 1.5  // 1.5초 내 중복 무시
 
     private override init() {
         super.init()
@@ -62,7 +65,6 @@ class NotificationManager: NSObject, ObservableObject {
         startWifiMonitoring()
         startBluetoothMonitoring()
 
-        // 호버 상태 변화 감지 → 호버 끝나면 큐 처리
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(proximityChanged),
@@ -76,7 +78,6 @@ class NotificationManager: NSObject, ObservableObject {
     @objc private func proximityChanged() {
         let isHovering = NotchState.shared.proximity > 0.08 || NotchState.shared.isExpanded
         if !isHovering && !isShowing && !queue.isEmpty {
-            // 호버 끝났고 큐에 쌓인 알림 있으면 바로 표시
             let next = queue.removeFirst()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                 self?.show(next)
@@ -89,11 +90,8 @@ class NotificationManager: NSObject, ObservableObject {
     func push(_ n: NowBarNotification) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-
             let isHovering = NotchState.shared.proximity > 0.08 || NotchState.shared.isExpanded
-
             if isHovering || self.isShowing {
-                // 호버 중이거나 표시 중이면 큐에만 쌓기
                 self.queue.append(n)
             } else {
                 self.show(n)
@@ -104,11 +102,8 @@ class NotificationManager: NSObject, ObservableObject {
     private func show(_ n: NowBarNotification) {
         hideTimer?.invalidate()
         isShowing = true
-
-        // 새 윈도우로 알림 표시
         AlertWindowManager.shared.show(n)
 
-        // 2.35초 후 (애니메이션 포함) 완료 처리
         hideTimer = Timer.scheduledTimer(withTimeInterval: 2.35, repeats: false) { [weak self] _ in
             DispatchQueue.main.async { self?.onAlertDismissed() }
         }
@@ -116,15 +111,9 @@ class NotificationManager: NSObject, ObservableObject {
 
     private func onAlertDismissed() {
         isShowing = false
-
         guard !queue.isEmpty else { return }
-
         let isHovering = NotchState.shared.proximity > 0.08 || NotchState.shared.isExpanded
-        if isHovering {
-            // 아직 호버 중이면 대기 (proximityChanged에서 처리)
-            return
-        }
-
+        if isHovering { return }
         let next = queue.removeFirst()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             self?.show(next)
@@ -160,7 +149,7 @@ class NotificationManager: NSObject, ObservableObject {
             PowerManager.shared.isCharging   = charging
 
             if !notify {
-                self.lastCharging = charging
+                self.lastCharging     = charging
                 self.lastBatteryLevel = level
                 return
             }
@@ -212,7 +201,7 @@ class NotificationManager: NSObject, ObservableObject {
             if connected {
                 let ssid = self.currentSSID() ?? self.lastSSID
                 self.lastSSID = ssid
-                self.push(NowBarNotification(icon: "wifi",       iconColor: .blue, title: ssid,         badge: "연결됨", badgeColor: .blue))
+                self.push(NowBarNotification(icon: "wifi", iconColor: .blue, title: ssid, badge: "연결됨", badgeColor: .blue))
             } else {
                 self.push(NowBarNotification(icon: "wifi.slash", iconColor: .gray, title: self.lastSSID, badge: "해제됨", badgeColor: .gray))
             }
@@ -239,13 +228,15 @@ class NotificationManager: NSObject, ObservableObject {
     // MARK: - 블루투스
 
     private func startBluetoothMonitoring() {
+        // 시작 시 이미 연결된 기기 수집
         let connected = IOBluetoothDevice.pairedDevices()?
             .compactMap { $0 as? IOBluetoothDevice }
             .filter { $0.isConnected() }
             .compactMap { $0.addressString } ?? []
         initialDevices = Set(connected)
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        // 1초 후 등록 (시작 직후 콜백 폭탄 방지)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             guard let self else { return }
             self.btConnectNotification = IOBluetoothDevice.register(
                 forConnectNotifications: self,
@@ -256,29 +247,45 @@ class NotificationManager: NSObject, ObservableObject {
     }
 
     @objc private func btConnected(_ n: IOBluetoothUserNotification, device: IOBluetoothDevice) {
+        // 해제 알림 등록
         let disc = device.register(forDisconnectNotification: self, selector: #selector(btDisconnected(_:device:)))
         btDisconnectMap[ObjectIdentifier(device)] = disc
 
+        // 초기 기기 무시
         if let addr = device.addressString, initialDevices.contains(addr) {
             initialDevices.remove(addr)
             return
         }
         guard btReady else { return }
 
-        push(NowBarNotification(
-            icon: iconForBTDevice(device), iconColor: .blue,
-            title: device.name ?? "블루투스 기기", badge: "연결됨", badgeColor: .blue
-        ))
+        // 블루투스 자체 on/off 시 name이 nil인 경우 무시
+        guard let name = device.name, !name.isEmpty else { return }
+
+        // 디바운싱: 같은 기기에서 1.5초 내 중복 이벤트 무시
+        let addr = device.addressString ?? name
+        let now = Date()
+        if let last = btLastEventTime[addr], now.timeIntervalSince(last) < btDebounceInterval { return }
+        btLastEventTime[addr] = now
+
+        NSLog("🔵 연결: \(name)")
+        push(NowBarNotification(icon: iconForBTDevice(device), iconColor: .blue, title: name, badge: "연결됨", badgeColor: .blue))
     }
 
     @objc private func btDisconnected(_ n: IOBluetoothUserNotification, device: IOBluetoothDevice) {
         btDisconnectMap.removeValue(forKey: ObjectIdentifier(device))
         guard btReady else { return }
 
-        push(NowBarNotification(
-            icon: iconForBTDevice(device), iconColor: .gray,
-            title: device.name ?? "블루투스 기기", badge: "해제됨", badgeColor: .gray
-        ))
+        // 블루투스 자체 on/off 시 name이 nil인 경우 무시
+        guard let name = device.name, !name.isEmpty else { return }
+
+        // 디바운싱
+        let addr = device.addressString ?? name
+        let now = Date()
+        if let last = btLastEventTime[addr], now.timeIntervalSince(last) < btDebounceInterval { return }
+        btLastEventTime[addr] = now
+
+        NSLog("🔵 해제: \(name)")
+        push(NowBarNotification(icon: iconForBTDevice(device), iconColor: .gray, title: name, badge: "해제됨", badgeColor: .gray))
     }
 
     private func iconForBTDevice(_ device: IOBluetoothDevice) -> String {
