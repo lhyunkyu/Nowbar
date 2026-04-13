@@ -12,7 +12,6 @@ struct NowBarOverlayView: View {
 
     let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
-    // proximity가 1.0 (노치 안)이거나 확장됐을 때만 표시
     var isHover: Bool    { state.proximity > 0.5 }
     var isExpanded: Bool { state.isExpanded }
     var shouldShow: Bool { isHover || isExpanded }
@@ -24,8 +23,6 @@ struct NowBarOverlayView: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            // 연결 목 제거 — 노치랑 자연스럽게 이어지도록 pill만 표시
-
             ZStack {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(Color.black)
@@ -67,15 +64,18 @@ struct NowBarOverlayView: View {
             .animation(.spring(response: 0.35, dampingFraction: 0.55), value: cornerRadius)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .padding(.top, 4)  // AlertPopupView와 동일
         .onChange(of: shouldShow) { show in
             if show && !wasShowing {
                 HapticManager.shared.playNowBarAppear()
                 dropProgress = 0.0; offsetY = -8
                 withAnimation(.spring(response: 0.38, dampingFraction: 0.58)) {
-                    dropProgress = 1.0; offsetY = 6
+                    dropProgress = 1.0; offsetY = 10  // AlertPopupView와 동일
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.42)) { offsetY = 3 }
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.42)) {
+                        offsetY = 6  // AlertPopupView와 동일
+                    }
                 }
             } else if !show && wasShowing {
                 withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
