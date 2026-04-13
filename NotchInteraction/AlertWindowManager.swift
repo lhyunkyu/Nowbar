@@ -15,7 +15,7 @@ class AlertWindowManager: ObservableObject {
             DispatchQueue.main.async { self._show(notification) }
         }
     }
-
+    //MARK: - 나우바알림 랜더링 영역
     private func _show(_ notification: NowBarNotification) {
         alertWindow?.orderOut(nil)
         alertWindow = nil
@@ -23,8 +23,8 @@ class AlertWindowManager: ObservableObject {
         guard let screen = NSScreen.screens.first else { return }
         let sf = screen.frame
 
-        let winWidth: CGFloat  = 320
-        let winHeight: CGFloat = 100  // 그림자 잘림 방지용 충분한 높이
+        let winWidth: CGFloat  = 360
+        let winHeight: CGFloat = 110  // 그림자 잘림 방지용 충분한 높이
 
         let rect = NSRect(
             x: (sf.width - winWidth) / 2,

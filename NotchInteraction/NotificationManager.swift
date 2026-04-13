@@ -235,8 +235,8 @@ class NotificationManager: NSObject, ObservableObject {
             .compactMap { $0.addressString } ?? []
         initialDevices = Set(connected)
 
-        // 1초 후 등록 (시작 직후 콜백 폭탄 방지)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+        // 0.3초 후 등록 (시작 직후 콜백 폭탄 방지)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let self else { return }
             self.btConnectNotification = IOBluetoothDevice.register(
                 forConnectNotifications: self,
@@ -300,13 +300,14 @@ class NotificationManager: NSObject, ObservableObject {
         if name.contains("trackpad")                                              { return "rectangle.and.hand.point.up.left" }
         if name.contains("speaker") || name.contains("soundbar")                 { return "hifispeaker.fill" }
         if name.contains("watch")                                                 { return "applewatch" }
-        if name.contains("iphone")                                                { return "iphone" }
-        if name.contains("ipad")                                                  { return "ipad" }
+        if name.contains("iphone") || name.contains("sm-") || name.contains("phone") { return "iphone" }
+        if name.contains("pad")                                                  { return "ipad" }
         if name.contains("controller") || name.contains("dualsense") ||
            name.contains("dualshock") || name.contains("xbox")                   { return "gamecontroller.fill" }
         switch cod {
         case 0x04: return "headphones"
         case 0x05: return "keyboard"
+        case 0x0075: return "iphone"
         default:   return "bluetooth"
         }
     }

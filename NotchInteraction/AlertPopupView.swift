@@ -10,7 +10,7 @@ struct AlertPopupView: View {
     var body: some View {
         ZStack(alignment: .top) {
             // 연결 목 없음 — pill만 표시
-
+            // MARK: - 나우바 알림 팝업 애니메이션 및 그리는 영역
             ZStack {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(Color.black)
