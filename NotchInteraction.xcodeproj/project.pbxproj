@@ -7,20 +7,20 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A001 /* NotchInteractionApp.swift */ = {isa = PBXBuildFile; fileRef = B001; };
-		A002 /* AppDelegate.swift */ = {isa = PBXBuildFile; fileRef = B002; };
-		A003 /* NotchState.swift */ = {isa = PBXBuildFile; fileRef = B003; };
-		A004 /* NowBarOverlayView.swift */ = {isa = PBXBuildFile; fileRef = B004; };
-		A005 /* NowPlayingManager.swift */ = {isa = PBXBuildFile; fileRef = B005; };
-		A006 /* SideBarNowPlayingView.swift */ = {isa = PBXBuildFile; fileRef = B006; };
-		A007 /* HapticManager.swift */ = {isa = PBXBuildFile; fileRef = B007; };
-		A008 /* PowerManager.swift */ = {isa = PBXBuildFile; fileRef = B008; };
-		A009 /* NotchBarView.swift */ = {isa = PBXBuildFile; fileRef = B009; };
-		A010 /* BluetoothManager.swift */ = {isa = PBXBuildFile; fileRef = B010; };
-		A011 /* NotificationManager.swift */ = {isa = PBXBuildFile; fileRef = B011; };
-		A012 /* NotifRow.swift */ = {isa = PBXBuildFile; fileRef = B012; };
-		A013 /* AlertWindowManager.swift */ = {isa = PBXBuildFile; fileRef = B013; };
-		A014 /* AlertPopupView.swift */ = {isa = PBXBuildFile; fileRef = B014; };
+		A001 /* NotchInteractionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B001 /* NotchInteractionApp.swift */; };
+		A002 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = B002 /* AppDelegate.swift */; };
+		A003 /* NotchState.swift in Sources */ = {isa = PBXBuildFile; fileRef = B003 /* NotchState.swift */; };
+		A004 /* NowBarOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B004 /* NowBarOverlayView.swift */; };
+		A005 /* NowPlayingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B005 /* NowPlayingManager.swift */; };
+		A006 /* SideBarNowPlayingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B006 /* SideBarNowPlayingView.swift */; };
+		A007 /* HapticManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B007 /* HapticManager.swift */; };
+		A008 /* PowerManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B008 /* PowerManager.swift */; };
+		A009 /* NotchBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B009 /* NotchBarView.swift */; };
+		A010 /* BluetoothManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B010 /* BluetoothManager.swift */; };
+		A011 /* NotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B011 /* NotificationManager.swift */; };
+		A012 /* NotifRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B012 /* NotifRow.swift */; };
+		A013 /* AlertWindowManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B013 /* AlertWindowManager.swift */; };
+		A014 /* AlertPopupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B014 /* AlertPopupView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -40,68 +40,142 @@
 		B013 /* AlertWindowManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertWindowManager.swift; sourceTree = "<group>"; };
 		B014 /* AlertPopupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertPopupView.swift; sourceTree = "<group>"; };
 		B015 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		E3DD41FF2F8E84FC00DB655E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		C001 = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		C001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		D000 = { isa = PBXGroup; children = (D001, D002); sourceTree = "<group>"; };
+		D000 = {
+			isa = PBXGroup;
+			children = (
+				E3DD41FF2F8E84FC00DB655E /* Assets.xcassets */,
+				D001 /* NotchInteraction */,
+				D002 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
 		D001 /* NotchInteraction */ = {
 			isa = PBXGroup;
-			children = (B001, B002, B003, B004, B005, B006, B007, B008, B009, B010, B011, B012, B013, B014, B015);
+			children = (
+				B001 /* NotchInteractionApp.swift */,
+				B002 /* AppDelegate.swift */,
+				B003 /* NotchState.swift */,
+				B004 /* NowBarOverlayView.swift */,
+				B005 /* NowPlayingManager.swift */,
+				B006 /* SideBarNowPlayingView.swift */,
+				B007 /* HapticManager.swift */,
+				B008 /* PowerManager.swift */,
+				B009 /* NotchBarView.swift */,
+				B010 /* BluetoothManager.swift */,
+				B011 /* NotificationManager.swift */,
+				B012 /* NotifRow.swift */,
+				B013 /* AlertWindowManager.swift */,
+				B014 /* AlertPopupView.swift */,
+				B015 /* Info.plist */,
+			);
 			path = NotchInteraction;
 			sourceTree = "<group>";
 		};
-		D002 /* Products */ = { isa = PBXGroup; children = (B000); name = Products; sourceTree = "<group>"; };
+		D002 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				B000 /* NotchInteraction.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		E001 = {
+		E001 /* NotchInteraction */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = F002;
-			buildPhases = (E002, C001, E003);
-			buildRules = ();
-			dependencies = ();
+			buildConfigurationList = F002 /* Build configuration list for PBXNativeTarget "NotchInteraction" */;
+			buildPhases = (
+				E002 /* Sources */,
+				C001 /* Frameworks */,
+				E003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
 			name = NotchInteraction;
 			productName = NotchInteraction;
-			productReference = B000;
+			productReference = B000 /* NotchInteraction.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
-		E000 = {
+		E000 /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 1500;
 				LastUpgradeCheck = 1500;
-				TargetAttributes = { E001 = { CreatedOnToolsVersion = 15.0; }; };
+				TargetAttributes = {
+					E001 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
 			};
-			buildConfigurationList = F001;
+			buildConfigurationList = F001 /* Build configuration list for PBXProject "NotchInteraction" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
-			knownRegions = (en, Base);
+			knownRegions = (
+				en,
+				Base,
+			);
 			mainGroup = D000;
-			productRefGroup = D002;
+			productRefGroup = D002 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
-			targets = (E001);
+			targets = (
+				E001 /* NotchInteraction */,
+			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		E003 = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		E003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		E002 = {
+		E002 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
-			files = (A001, A002, A003, A004, A005, A006, A007, A008, A009, A010, A011, A012, A013, A014);
+			files = (
+				A001 /* NotchInteractionApp.swift in Sources */,
+				A002 /* AppDelegate.swift in Sources */,
+				A003 /* NotchState.swift in Sources */,
+				A004 /* NowBarOverlayView.swift in Sources */,
+				A005 /* NowPlayingManager.swift in Sources */,
+				A006 /* SideBarNowPlayingView.swift in Sources */,
+				A007 /* HapticManager.swift in Sources */,
+				A008 /* PowerManager.swift in Sources */,
+				A009 /* NotchBarView.swift in Sources */,
+				A010 /* BluetoothManager.swift in Sources */,
+				A011 /* NotificationManager.swift in Sources */,
+				A012 /* NotifRow.swift in Sources */,
+				A013 /* AlertWindowManager.swift in Sources */,
+				A014 /* AlertPopupView.swift in Sources */,
+			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
@@ -121,7 +195,10 @@
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_OPTIMIZATION_LEVEL = 0;
-				GCC_PREPROCESSOR_DEFINITIONS = ("DEBUG=1", "$(inherited)");
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
 				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_VARIABLE = YES;
@@ -156,7 +233,7 @@
 			};
 			name = Release;
 		};
-		F020 /* Debug - Target */ = {
+		F020 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
@@ -166,7 +243,10 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NotchInteraction/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/../Frameworks");
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.notchinteraction.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -175,7 +255,7 @@
 			};
 			name = Debug;
 		};
-		F021 /* Release - Target */ = {
+		F021 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
@@ -185,7 +265,10 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NotchInteraction/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/../Frameworks");
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.notchinteraction.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -197,10 +280,25 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		F001 = { isa = XCConfigurationList; buildConfigurations = (F010, F011); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		F002 = { isa = XCConfigurationList; buildConfigurations = (F020, F021); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		F001 /* Build configuration list for PBXProject "NotchInteraction" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F010 /* Debug */,
+				F011 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F002 /* Build configuration list for PBXNativeTarget "NotchInteraction" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F020 /* Debug */,
+				F021 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
-
 	};
-	rootObject = E000;
+	rootObject = E000 /* Project object */;
 }
