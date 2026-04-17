@@ -76,7 +76,7 @@ struct SideBarNowPlayingView: View {
                 .foregroundColor(.white)
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .frame(maxWidth: 110, alignment: .leading)
+                .frame(maxWidth: 60, alignment: .leading)
 
             // 뮤직 웨이브
             MusicWaveView()
@@ -87,7 +87,7 @@ struct SideBarNowPlayingView: View {
         .background(
             Capsule()
                 .fill(accentColor)
-                .shadow(color: accentColor.opacity(0.65), radius: 10, x: 0, y: 4)
+//                .shadow(color: accentColor.opacity(0.65), radius: 10, x: 0, y: 4)
         )
         // 노치에서 튀어나오는/들어가는 애니메이션
         // anchor: .leading → 왼쪽(노치 방향)에서 확장/수축
