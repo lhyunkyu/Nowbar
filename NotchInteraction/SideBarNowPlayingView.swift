@@ -33,22 +33,88 @@ private extension NSImage {
     }
 }
 
-// MARK: - 실시간 나우바 (노치 옆 Live Now Bar)
+// MARK: - 마퀴 스크롤 텍스트
+struct MarqueeText: View {
+    let text: String
+    let maxWidth: CGFloat
+    let font: Font
+
+    @State private var textWidth: CGFloat  = 0
+    @State private var scrollOffset: CGFloat = 0
+    @State private var isScrolling: Bool   = false
+
+    private var needsScroll: Bool { textWidth > maxWidth }
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            // 실제 텍스트 (width 측정용 hidden)
+            Text(text)
+                .font(font)
+                .fixedSize()
+                .hidden()
+                .background(
+                    GeometryReader { geo in
+                        Color.clear
+                            .onAppear   { textWidth = geo.size.width; scheduleScroll() }
+                            .onChange(of: text) { _ in
+                                textWidth = geo.size.width
+                                scrollOffset = 0
+                                isScrolling  = false
+                                scheduleScroll()
+                            }
+                    }
+                )
+
+            // 보이는 텍스트
+            Text(text)
+                .font(font)
+                .fixedSize()
+                .offset(x: scrollOffset)
+        }
+        .frame(width: maxWidth, alignment: .leading)
+        .clipped()
+    }
+
+    private func scheduleScroll() {
+        guard needsScroll else { return }
+        let scrollDist = textWidth - maxWidth + 16
+        let duration   = Double(scrollDist) / 28.0   // 28pt/sec 속도
+
+        // 1.2초 대기 → 왼쪽으로 스크롤 → 0.6초 대기 → 복귀 → 반복
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            withAnimation(.linear(duration: duration)) {
+                scrollOffset = -scrollDist
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.6) {
+                withAnimation(.linear(duration: 0.4)) {
+                    scrollOffset = 0
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    scheduleScroll()  // 루프
+                }
+            }
+        }
+    }
+}
+
+// MARK: - 실시간 나우바
 struct SideBarNowPlayingView: View {
     @ObservedObject var state      = NotchState.shared
     @ObservedObject var nowPlaying = NowPlayingManager.shared
 
-    /// 노래가 재생 중이고 노치 호버/확장 상태가 아닐 때만 표시
-    var shouldShow: Bool {
-        nowPlaying.isPlaying &&
-        !nowPlaying.title.isEmpty &&
+    // isShowingBar 는 isPlaying 과 별도 - 딜레이 사라짐 처리
+    @State private var appeared:     Bool  = false
+    @State private var isShowingBar: Bool  = false
+    @State private var waveAnimating: Bool = false
+    @State private var accentColor: Color  = Color.black
+    @State private var hideWorkItem: DispatchWorkItem? = nil
+
+    var shouldRender: Bool {
+        isShowingBar &&
         state.proximity <= 0.08 &&
         !state.isExpanded &&
         !AlertWindowManager.shared.isVisible
     }
-
-    @State private var appeared: Bool     = false
-    @State private var accentColor: Color = Color.black
 
     var body: some View {
         HStack(spacing: 7) {
@@ -70,16 +136,16 @@ struct SideBarNowPlayingView: View {
                 }
             }
 
-            // 노래 제목
-            Text(nowPlaying.title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.white)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: 60, alignment: .leading)
+            // 마퀴 스크롤 제목
+            MarqueeText(
+                text: nowPlaying.title.isEmpty ? "" : nowPlaying.title,
+                maxWidth: 70,
+                font: .system(size: 11, weight: .semibold)
+            )
+            .foregroundColor(.white)
 
             // 뮤직 웨이브
-            MusicWaveView()
+            MusicWaveView(animating: waveAnimating)
                 .frame(width: 14, height: 12)
         }
         .padding(.horizontal, 12)
@@ -87,53 +153,79 @@ struct SideBarNowPlayingView: View {
         .background(
             Capsule()
                 .fill(accentColor)
-//                .shadow(color: accentColor.opacity(0.65), radius: 10, x: 0, y: 4)
         )
-        // 노치에서 튀어나오는/들어가는 애니메이션
-        // anchor: .leading → 왼쪽(노치 방향)에서 확장/수축
+        // ── 물방울 팝 애니메이션 ──────────────────────────
+        // appeared && shouldRender 일 때 1.0, 아니면 찌그러진 물방울 초기값
         .scaleEffect(
-            x: appeared && shouldShow ? 1.0 : 0.05,
-            y: appeared && shouldShow ? 1.0 : 0.6,
+            x: appeared && shouldRender ? 1.0 : 0.05,
+            y: appeared && shouldRender ? 1.0 : 0.15,
             anchor: .leading
         )
-        .opacity(appeared && shouldShow ? 1 : 0)
+        .opacity(appeared && shouldRender ? 1 : 0)
         .animation(
-            shouldShow
-                ? .spring(response: 0.42, dampingFraction: 0.60)   // 튀어나올 때: 탄성 있게
-                : .spring(response: 0.26, dampingFraction: 0.88),   // 들어갈 때: 빠르고 스냅하게
-            value: shouldShow
+            shouldRender
+                // 물방울: 낮은 dampingFraction → 통통 튀는 느낌
+                ? .spring(response: 0.50, dampingFraction: 0.38)
+                // 노치로 복귀: 빠르고 깔끔하게
+                : .spring(response: 0.24, dampingFraction: 0.90),
+            value: shouldRender
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .padding(.leading, 6)
+
+        // MARK: Lifecycle
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 appeared = true
             }
-            refreshAccentColor()
+            if nowPlaying.isPlaying { triggerShow() }
+        }
+        .onChange(of: nowPlaying.isPlaying) { playing in
+            if playing {
+                triggerShow()
+            } else {
+                triggerHide()
+            }
         }
         .onChange(of: nowPlaying.artwork) { _ in
             refreshAccentColor()
         }
-        .onChange(of: nowPlaying.isPlaying) { playing in
-            if !playing {
-                withAnimation(.easeInOut(duration: 0.4)) {
-                    accentColor = .black
-                }
-            } else {
-                refreshAccentColor()
-            }
+        .onChange(of: nowPlaying.title) { _ in
+            // 곡 바뀌면 색 갱신
+            refreshAccentColor()
         }
     }
 
-    // MARK: 대표 색 갱신 (백그라운드 스레드에서 추출 후 메인에서 업데이트)
-    private func refreshAccentColor() {
-        guard let artwork = nowPlaying.artwork else {
-            withAnimation(.easeInOut(duration: 0.4)) { accentColor = .black }
-            return
+    // MARK: - Show / Hide 제어
+    private func triggerShow() {
+        hideWorkItem?.cancel()
+        hideWorkItem = nil
+        isShowingBar  = true
+        waveAnimating = true
+        refreshAccentColor()
+    }
+
+    private func triggerHide() {
+        // 1. 웨이브 멈춤
+        waveAnimating = false
+
+        // 2. 1.5초 후 바 사라짐
+        let work = DispatchWorkItem {
+            isShowingBar = false
+            // 색은 유지하다가 완전히 사라진 뒤 리셋
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                accentColor = .black
+            }
         }
+        hideWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
+    }
+
+    // MARK: - 대표 색 추출
+    private func refreshAccentColor() {
+        guard let artwork = nowPlaying.artwork else { return }
         DispatchQueue.global(qos: .userInitiated).async {
             let raw      = artwork.dominantColor()
-            // 가독성을 위해 살짝 어둡게 블렌드
             let darkened = raw.blended(withFraction: 0.22, of: .black) ?? raw
             DispatchQueue.main.async {
                 withAnimation(.easeInOut(duration: 0.5)) {
@@ -144,9 +236,9 @@ struct SideBarNowPlayingView: View {
     }
 }
 
-// MARK: - 뮤직 웨이브 애니메이션
+// MARK: - 뮤직 웨이브 (외부에서 animating 제어)
 struct MusicWaveView: View {
-    @State private var animating = false
+    var animating: Bool
 
     let heights: [CGFloat] = [0.45, 0.9, 0.6, 1.0, 0.7]
     let delays:  [Double]  = [0.0, 0.12, 0.22, 0.08, 0.18]
@@ -158,13 +250,12 @@ struct MusicWaveView: View {
                     .fill(Color.white.opacity(0.85))
                     .frame(width: 2, height: animating ? 12 * heights[i] : 2)
                     .animation(
-                        .easeInOut(duration: 0.42)
-                         .repeatForever(autoreverses: true)
-                         .delay(delays[i]),
+                        animating
+                            ? .easeInOut(duration: 0.42).repeatForever(autoreverses: true).delay(delays[i])
+                            : .easeInOut(duration: 0.25),
                         value: animating
                     )
             }
         }
-        .onAppear { animating = true }
     }
 }
