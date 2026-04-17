@@ -4,94 +4,103 @@ import CoreImage
 // MARK: - NSImage 대표 색상 추출
 private extension NSImage {
     func dominantColor() -> NSColor {
-        guard let cgImage = cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-            return .black
-        }
+        guard let cgImage = cgImage(forProposedRect: nil, context: nil, hints: nil) else { return .black }
         let ci = CIImage(cgImage: cgImage)
         let extent = ci.extent
         guard let filter = CIFilter(name: "CIAreaAverage", parameters: [
             kCIInputImageKey: ci,
-            kCIInputExtentKey: CIVector(
-                x: extent.origin.x, y: extent.origin.y,
-                z: extent.size.width, w: extent.size.height
-            )
+            kCIInputExtentKey: CIVector(x: extent.origin.x, y: extent.origin.y,
+                                        z: extent.size.width, w: extent.size.height)
         ]), let out = filter.outputImage else { return .black }
-
         var px = [UInt8](repeating: 0, count: 4)
-        CIContext().render(
-            out, toBitmap: &px, rowBytes: 4,
-            bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
-            format: .RGBA8,
-            colorSpace: CGColorSpaceCreateDeviceRGB()
-        )
-        return NSColor(
-            calibratedRed: CGFloat(px[0]) / 255,
-            green:         CGFloat(px[1]) / 255,
-            blue:          CGFloat(px[2]) / 255,
-            alpha:         1
-        )
+        CIContext().render(out, toBitmap: &px, rowBytes: 4,
+                           bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
+                           format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
+        return NSColor(calibratedRed: CGFloat(px[0]) / 255,
+                       green: CGFloat(px[1]) / 255,
+                       blue:  CGFloat(px[2]) / 255, alpha: 1)
     }
 }
 
-// MARK: - 마퀴 스크롤 텍스트
-struct MarqueeText: View {
+// MARK: - PreferenceKey (텍스트 너비 측정용)
+private struct TextWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+// MARK: - 뉴스 티커 스타일 연속 스크롤 텍스트
+struct TickerText: View {
     let text: String
     let maxWidth: CGFloat
     let font: Font
 
-    @State private var textWidth: CGFloat  = 0
-    @State private var scrollOffset: CGFloat = 0
-    @State private var isScrolling: Bool   = false
+    @State private var textWidth: CGFloat = 0
+    @State private var offset: CGFloat    = 0
+    @State private var token: UUID        = UUID()   // 루프 취소 토큰
 
-    private var needsScroll: Bool { textWidth > maxWidth }
+    private let gap: CGFloat = 32
+    private var needsTicker: Bool { textWidth > maxWidth }
+    private var loopWidth: CGFloat { textWidth + gap }
+    private var duration: Double   { Double(loopWidth) / 35.0 }
 
     var body: some View {
         ZStack(alignment: .leading) {
-            // 실제 텍스트 (width 측정용 hidden)
+            // 숨김 측정용 (PreferenceKey로 너비 전달)
             Text(text)
-                .font(font)
-                .fixedSize()
-                .hidden()
-                .background(
-                    GeometryReader { geo in
-                        Color.clear
-                            .onAppear   { textWidth = geo.size.width; scheduleScroll() }
-                            .onChange(of: text) { _ in
-                                textWidth = geo.size.width
-                                scrollOffset = 0
-                                isScrolling  = false
-                                scheduleScroll()
-                            }
-                    }
-                )
+                .font(font).fixedSize().hidden()
+                .overlay(GeometryReader { geo in
+                    Color.clear.preference(key: TextWidthKey.self, value: geo.size.width)
+                })
 
-            // 보이는 텍스트
-            Text(text)
-                .font(font)
-                .fixedSize()
-                .offset(x: scrollOffset)
+            if needsTicker {
+                HStack(spacing: gap) {
+                    Text(text).font(font).fixedSize().foregroundColor(.white)
+                    Text(text).font(font).fixedSize().foregroundColor(.white)
+                }
+                .offset(x: offset)
+            } else {
+                Text(text).font(font).fixedSize().foregroundColor(.white)
+            }
         }
         .frame(width: maxWidth, alignment: .leading)
         .clipped()
+        // 레이아웃 패스 후 정확한 너비 수신
+        .onPreferenceChange(TextWidthKey.self) { width in
+            guard abs(width - textWidth) > 0.5 else { return }
+            textWidth = width
+            restartTicker()
+        }
     }
 
-    private func scheduleScroll() {
-        guard needsScroll else { return }
-        let scrollDist = textWidth - maxWidth + 16
-        let duration   = Double(scrollDist) / 28.0   // 28pt/sec 속도
+    private func restartTicker() {
+        // 새 토큰 발급 → 이전 루프의 asyncAfter 콜백이 실행되어도 무시됨
+        let newToken = UUID()
+        token = newToken
 
-        // 1.2초 대기 → 왼쪽으로 스크롤 → 0.6초 대기 → 복귀 → 반복
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            withAnimation(.linear(duration: duration)) {
-                scrollOffset = -scrollDist
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.6) {
-                withAnimation(.linear(duration: 0.4)) {
-                    scrollOffset = 0
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                    scheduleScroll()  // 루프
-                }
+        // offset 즉시 리셋 (애니메이션 없이)
+        var t = Transaction(); t.disablesAnimations = true
+        withTransaction(t) { offset = 0 }
+
+        guard needsTicker else { return }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            guard token == newToken else { return }
+            runLoop(token: newToken)
+        }
+    }
+
+    private func runLoop(token: UUID) {
+        guard self.token == token else { return }
+
+        withAnimation(.linear(duration: duration)) { offset = -loopWidth }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
+            guard self.token == token else { return }
+            // 즉시 리셋 후 다음 루프
+            var t = Transaction(); t.disablesAnimations = true
+            withTransaction(t) { offset = 0 }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+                runLoop(token: token)
             }
         }
     }
@@ -102,12 +111,17 @@ struct SideBarNowPlayingView: View {
     @ObservedObject var state      = NotchState.shared
     @ObservedObject var nowPlaying = NowPlayingManager.shared
 
-    // isShowingBar 는 isPlaying 과 별도 - 딜레이 사라짐 처리
-    @State private var appeared:     Bool  = false
-    @State private var isShowingBar: Bool  = false
-    @State private var waveAnimating: Bool = false
-    @State private var accentColor: Color  = Color.black
-    @State private var hideWorkItem: DispatchWorkItem? = nil
+    @State private var appeared:      Bool  = false
+    @State private var isShowingBar:  Bool  = false
+    @State private var waveAnimating: Bool  = false
+    @State private var accentColor:   Color = .black
+    @State private var hideWorkItem:  DispatchWorkItem? = nil
+
+    // 애니메이션용 상태
+    @State private var barOffsetX:  CGFloat = -10
+    @State private var barScaleX:   CGFloat = 0.05
+    @State private var barScaleY:   CGFloat = 0.2
+    @State private var barOpacity:  Double  = 0
 
     var shouldRender: Bool {
         isShowingBar &&
@@ -121,28 +135,25 @@ struct SideBarNowPlayingView: View {
             // 앨범 아트
             if let artwork = nowPlaying.artwork {
                 Image(nsImage: artwork)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
+                    .resizable().aspectRatio(contentMode: .fill)
                     .frame(width: 22, height: 22)
                     .clipShape(RoundedRectangle(cornerRadius: 5))
             } else {
                 ZStack {
                     RoundedRectangle(cornerRadius: 5)
-                        .fill(Color.white.opacity(0.2))
-                        .frame(width: 22, height: 22)
+                        .fill(Color.white.opacity(0.2)).frame(width: 22, height: 22)
                     Image(systemName: "music.note")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundColor(.white.opacity(0.9))
                 }
             }
 
-            // 마퀴 스크롤 제목
-            MarqueeText(
-                text: nowPlaying.title.isEmpty ? "" : nowPlaying.title,
-                maxWidth: 70,
-                font: .system(size: 11, weight: .semibold)
+            // 뉴스 티커 스크롤 제목
+            TickerText(
+                text:     nowPlaying.title.isEmpty ? "" : nowPlaying.title,
+                maxWidth: 72,
+                font:     .system(size: 11, weight: .semibold)
             )
-            .foregroundColor(.white)
 
             // 뮤직 웨이브
             MusicWaveView(animating: waveAnimating)
@@ -150,70 +161,69 @@ struct SideBarNowPlayingView: View {
         }
         .padding(.horizontal, 12)
         .frame(height: 28)
-        .background(
-            Capsule()
-                .fill(accentColor)
-        )
-        // ── 물방울 팝 애니메이션 ──────────────────────────
-        // appeared && shouldRender 일 때 1.0, 아니면 찌그러진 물방울 초기값
-        .scaleEffect(
-            x: appeared && shouldRender ? 1.0 : 0.05,
-            y: appeared && shouldRender ? 1.0 : 0.15,
-            anchor: .leading
-        )
-        .opacity(appeared && shouldRender ? 1 : 0)
-        .animation(
-            shouldRender
-                // 물방울: 낮은 dampingFraction → 통통 튀는 느낌
-                ? .spring(response: 0.50, dampingFraction: 0.38)
-                // 노치로 복귀: 빠르고 깔끔하게
-                : .spring(response: 0.24, dampingFraction: 0.90),
-            value: shouldRender
-        )
+        .background(Capsule().fill(accentColor))
+        // ── 오른쪽으로 튀어나오는 물방울 애니메이션
+        .scaleEffect(x: barScaleX, y: barScaleY, anchor: .leading)
+        .offset(x: barOffsetX)
+        .opacity(barOpacity)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .padding(.leading, 6)
 
-        // MARK: Lifecycle
         .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                appeared = true
-            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { appeared = true }
             if nowPlaying.isPlaying { triggerShow() }
         }
         .onChange(of: nowPlaying.isPlaying) { playing in
-            if playing {
-                triggerShow()
-            } else {
-                triggerHide()
-            }
+            playing ? triggerShow() : triggerHide()
         }
-        .onChange(of: nowPlaying.artwork) { _ in
-            refreshAccentColor()
+        .onChange(of: shouldRender) { show in
+            if show { animateIn() } else { animateOut() }
         }
-        .onChange(of: nowPlaying.title) { _ in
-            // 곡 바뀌면 색 갱신
-            refreshAccentColor()
+        .onChange(of: nowPlaying.artwork) { _ in refreshAccentColor() }
+        .onChange(of: nowPlaying.title)   { _ in refreshAccentColor() }
+    }
+
+    // MARK: - 물방울 튀어나오기 (오른쪽으로 밀려나오며 뽈롱)
+    private func animateIn() {
+        // 초기: 노치 위치에서 납작하게
+        barOffsetX = -10
+        barScaleX  = 0.05
+        barScaleY  = 0.2
+        barOpacity = 0
+
+        // 1단계: 오른쪽으로 밀리며 X축 펼쳐짐
+        withAnimation(.spring(response: 0.40, dampingFraction: 0.55)) {
+            barOffsetX = 0
+            barScaleX  = 1.0
+            barScaleY  = 1.0
+            barOpacity = 1
         }
     }
 
-    // MARK: - Show / Hide 제어
+    // MARK: - 노치로 복귀 (왼쪽으로 쏙)
+    private func animateOut() {
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.90)) {
+            barOffsetX = -10
+            barScaleX  = 0.05
+            barScaleY  = 0.2
+            barOpacity = 0
+        }
+    }
+
+    // MARK: - Show / Hide
     private func triggerShow() {
         hideWorkItem?.cancel()
-        hideWorkItem = nil
+        hideWorkItem  = nil
         isShowingBar  = true
         waveAnimating = true
         refreshAccentColor()
     }
 
     private func triggerHide() {
-        // 1. 웨이브 멈춤
         waveAnimating = false
-
-        // 2. 1.5초 후 바 사라짐
         let work = DispatchWorkItem {
             isShowingBar = false
-            // 색은 유지하다가 완전히 사라진 뒤 리셋
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 accentColor = .black
             }
         }
@@ -228,18 +238,15 @@ struct SideBarNowPlayingView: View {
             let raw      = artwork.dominantColor()
             let darkened = raw.blended(withFraction: 0.22, of: .black) ?? raw
             DispatchQueue.main.async {
-                withAnimation(.easeInOut(duration: 0.5)) {
-                    accentColor = Color(darkened)
-                }
+                withAnimation(.easeInOut(duration: 0.5)) { accentColor = Color(darkened) }
             }
         }
     }
 }
 
-// MARK: - 뮤직 웨이브 (외부에서 animating 제어)
+// MARK: - 뮤직 웨이브
 struct MusicWaveView: View {
     var animating: Bool
-
     let heights: [CGFloat] = [0.45, 0.9, 0.6, 1.0, 0.7]
     let delays:  [Double]  = [0.0, 0.12, 0.22, 0.08, 0.18]
 
