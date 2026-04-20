@@ -1,6 +1,5 @@
 import Foundation
 import AppKit
-import CoreImage
 
 class NowPlayingManager: ObservableObject {
     static let shared = NowPlayingManager()
@@ -10,22 +9,22 @@ class NowPlayingManager: ObservableObject {
     @Published var isPlaying: Bool   = false
     @Published var artwork: NSImage? = nil
 
-    // 마지막으로 업데이트한 소스 ("spotify" | "music" | "mediaremote")
-    private var lastSource: String = ""
-
+    // MARK: - MediaRemote 함수 타입
     private typealias MRMediaRemoteGetNowPlayingInfoFunc =
         @convention(c) (DispatchQueue, @escaping ([String: Any]) -> Void) -> Void
-    private var getNowPlayingInfo: MRMediaRemoteGetNowPlayingInfoFunc?
+    private typealias MRMediaRemoteRegisterForNowPlayingNotificationsFunc =
+        @convention(c) (DispatchQueue) -> Void
 
+    private var getNowPlayingInfo: MRMediaRemoteGetNowPlayingInfoFunc?
     private var pollingTimer: Timer?
 
     private init() {
         loadMediaRemote()
-        registerDistributedNotifications()
+        registerAppNotifications()
         startPolling()
     }
 
-    // MARK: - MediaRemote (아트워크 전용)
+    // MARK: - MediaRemote 로드 + 시스템 미디어 알림 등록
     private func loadMediaRemote() {
         guard let bundle = CFBundleCreate(
             kCFAllocatorDefault,
@@ -34,126 +33,143 @@ class NowPlayingManager: ObservableObject {
 
         if let ptr = CFBundleGetFunctionPointerForName(bundle, "MRMediaRemoteGetNowPlayingInfo" as CFString) {
             getNowPlayingInfo = unsafeBitCast(ptr, to: MRMediaRemoteGetNowPlayingInfoFunc.self)
-            NSLog("✅ MediaRemote 로드 성공")
+            NSLog("✅ MRMediaRemoteGetNowPlayingInfo 로드")
         }
+
+        // 시스템에 미디어 변경 알림 수신 등록
+        // → Chrome, Safari, VLC, Podcasts 등 모든 플레이어 커버
+        if let ptr = CFBundleGetFunctionPointerForName(
+            bundle, "MRMediaRemoteRegisterForNowPlayingNotifications" as CFString
+        ) {
+            let register = unsafeBitCast(ptr, to: MRMediaRemoteRegisterForNowPlayingNotificationsFunc.self)
+            register(DispatchQueue.main)
+            NSLog("✅ MRMediaRemoteRegisterForNowPlayingNotifications 등록")
+        }
+
+        // MediaRemote가 올리는 NotificationCenter 알림 구독
+        let nc = NotificationCenter.default
+        let names = [
+            "kMRMediaRemoteNowPlayingInfoDidChangeNotification",
+            "kMRMediaRemoteNowPlayingApplicationDidChangeNotification",
+            "kMRMediaRemoteNowPlayingApplicationIsPlayingDidChangeNotification",
+        ]
+        for name in names {
+            nc.addObserver(self, selector: #selector(handleMediaRemoteNotification),
+                           name: NSNotification.Name(name), object: nil)
+        }
+        NSLog("✅ MediaRemote 시스템 알림 구독 완료")
     }
 
-    // MARK: - Distributed Notifications (Spotify / Apple Music 직접 수신)
-    private func registerDistributedNotifications() {
+    @objc private func handleMediaRemoteNotification(_ note: Notification) {
+        NSLog("🔔 MediaRemote 알림: \(note.name.rawValue)")
+        fetchFromMediaRemote()
+    }
+
+    // MARK: - 앱별 Distributed Notifications
+    // Spotify, Apple Music 은 자체 알림을 바로 보내므로 더 빠르게 반응
+    private func registerAppNotifications() {
         let dnc = DistributedNotificationCenter.default()
 
-        // Spotify
-        dnc.addObserver(
-            forName: NSNotification.Name("com.spotify.client.PlaybackStateChanged"),
-            object: nil, queue: .main
-        ) { [weak self] note in
-            self?.handleSpotify(note)
-        }
+        let appNotifications: [(name: String, handler: String)] = [
+            // Spotify
+            ("com.spotify.client.PlaybackStateChanged", "handleSpotify:"),
+            // Apple Music / iTunes
+            ("com.apple.Music.playerInfo",              "handleAppleMusic:"),
+            ("com.apple.iTunes.playerInfo",             "handleAppleMusic:"),
+            // Vox
+            ("com.coppertino.Vox.trackChanged",         "handleGenericDNC:"),
+            // Doppler
+            ("com.brushedtype.doppler.playbackState",   "handleGenericDNC:"),
+        ]
 
-        // Apple Music
-        dnc.addObserver(
-            forName: NSNotification.Name("com.apple.Music.playerInfo"),
-            object: nil, queue: .main
-        ) { [weak self] note in
-            self?.handleAppleMusic(note)
+        for (name, sel) in appNotifications {
+            dnc.addObserver(self, selector: Selector(sel),
+                            name: NSNotification.Name(name), object: nil)
         }
-
-        // iTunes (구버전 호환)
-        dnc.addObserver(
-            forName: NSNotification.Name("com.apple.iTunes.playerInfo"),
-            object: nil, queue: .main
-        ) { [weak self] note in
-            self?.handleAppleMusic(note)
-        }
-
-        NSLog("✅ Distributed Notification 등록 완료")
+        NSLog("✅ 앱별 Distributed Notification 등록 완료")
     }
 
-    private func handleSpotify(_ note: Notification) {
+    // MARK: - Spotify 핸들러
+    @objc private func handleSpotify(_ note: Notification) {
         let info  = note.userInfo ?? [:]
         let state = info["Player State"] as? String ?? ""
-        let name  = info["Name"]   as? String ?? ""
-        let art   = info["Artist"] as? String ?? ""
+        let name  = info["Name"]         as? String ?? ""
+        let art   = info["Artist"]       as? String ?? ""
 
-        NSLog("🎵 [Spotify] state=\(state) title=\(name) artist=\(art)")
-
-        lastSource = "spotify"
-        title      = name
-        artist     = art
-        isPlaying  = (state == "Playing") && !name.isEmpty
-
-        // 아트워크는 MediaRemote에서 가져옴
-        if isPlaying { fetchArtwork() }
-        else         { artwork = nil }
+        NSLog("🎵 [Spotify] \(state) – \(name)")
+        applyState(title: name, artist: art, playing: state == "Playing" && !name.isEmpty)
     }
 
-    private func handleAppleMusic(_ note: Notification) {
+    // MARK: - Apple Music / iTunes 핸들러
+    @objc private func handleAppleMusic(_ note: Notification) {
         let info  = note.userInfo ?? [:]
         let state = info["Player State"] as? String ?? ""
-        let name  = info["Name"]   as? String ?? ""
-        let art   = info["Artist"] as? String ?? ""
+        let name  = info["Name"]         as? String ?? ""
+        let art   = info["Artist"]       as? String ?? ""
 
-        NSLog("🎵 [Music] state=\(state) title=\(name) artist=\(art)")
-
-        lastSource = "music"
-        title      = name
-        artist     = art
-        isPlaying  = (state == "Playing") && !name.isEmpty
-
-        if isPlaying { fetchArtwork() }
-        else         { artwork = nil }
+        NSLog("🎵 [Music] \(state) – \(name)")
+        applyState(title: name, artist: art, playing: state == "Playing" && !name.isEmpty)
     }
 
-    // MARK: - MediaRemote 아트워크 fetch
-    private func fetchArtwork() {
+    // MARK: - 기타 앱 핸들러 (MediaRemote로 상세 정보 fetch)
+    @objc private func handleGenericDNC(_ note: Notification) {
+        NSLog("🔔 [Generic DNC] \(note.name.rawValue)")
+        fetchFromMediaRemote()
+    }
+
+    // MARK: - MediaRemote fetch (Chrome·Safari·VLC·Podcasts 등 모든 플레이어)
+    func fetchFromMediaRemote() {
         getNowPlayingInfo?(DispatchQueue.main) { [weak self] info in
-            guard let self else { return }
-            let data = info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data
-                    ?? info["artworkData"] as? Data
-            if let data, let img = NSImage(data: data) {
+            guard let self, !info.isEmpty else { return }
+
+            let newTitle  = info["kMRMediaRemoteNowPlayingInfoTitle"]  as? String ?? ""
+            let newArtist = info["kMRMediaRemoteNowPlayingInfoArtist"] as? String ?? ""
+            let rate      = info["kMRMediaRemoteNowPlayingInfoPlaybackRate"] as? Double ?? 0.0
+            let playing   = rate > 0 && !newTitle.isEmpty
+
+            NSLog("🔄 [MediaRemote] \(playing ? "▶" : "■") \(newTitle)")
+
+            self.applyState(title: newTitle, artist: newArtist, playing: playing)
+
+            // 아트워크
+            if let data = info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data,
+               let img  = NSImage(data: data) {
                 self.artwork = img
-                NSLog("🖼️ 아트워크 업데이트 성공")
+            } else if !playing {
+                self.artwork = nil
             }
         }
     }
 
-    // MARK: - 폴링 (Distributed Notification 못 받는 앱 대비 fallback)
+    // MARK: - 상태 적용 (중복 업데이트 방지)
+    private func applyState(title newTitle: String, artist newArtist: String, playing newPlaying: Bool) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if self.title     != newTitle   { self.title   = newTitle }
+            if self.artist    != newArtist  { self.artist  = newArtist }
+            if self.isPlaying != newPlaying { self.isPlaying = newPlaying }
+
+            // 재생 시작 시 아트워크 fetch (Spotify·Music 알림엔 아트워크 없음)
+            if newPlaying { self.fetchArtworkIfNeeded() }
+            else          { self.artwork = nil }
+        }
+    }
+
+    private func fetchArtworkIfNeeded() {
+        getNowPlayingInfo?(DispatchQueue.main) { [weak self] info in
+            guard let self else { return }
+            if let data = info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data,
+               let img  = NSImage(data: data) {
+                self.artwork = img
+            }
+        }
+    }
+
+    // MARK: - 폴링 (알림 놓치는 경우 fallback, 2초마다)
     private func startPolling() {
+        fetchFromMediaRemote()
         pollingTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
-            self?.pollMediaRemote()
-        }
-    }
-
-    private func pollMediaRemote() {
-        getNowPlayingInfo?(DispatchQueue.main) { [weak self] info in
-            guard let self else { return }
-            guard !info.isEmpty else { return }
-
-            let newTitle = info["kMRMediaRemoteNowPlayingInfoTitle"] as? String
-                        ?? info["title"] as? String
-                        ?? ""
-            let newArtist = info["kMRMediaRemoteNowPlayingInfoArtist"] as? String
-                         ?? info["artist"] as? String
-                         ?? ""
-            let rate = info["kMRMediaRemoteNowPlayingInfoPlaybackRate"] as? Double
-                    ?? info["playbackRate"] as? Double
-                    ?? 0.0
-            let playing = rate > 0 && !newTitle.isEmpty
-
-            // Distributed Notification 이미 받은 경우엔 title/artist 덮어쓰지 않음
-            // 단, 아트워크는 항상 업데이트
-            if self.lastSource == "" || newTitle != self.title {
-                if self.title != newTitle   { self.title   = newTitle }
-                if self.artist != newArtist { self.artist  = newArtist }
-                if self.isPlaying != playing { self.isPlaying = playing }
-                NSLog("🔄 [MediaRemote Polling] title=\(newTitle) playing=\(playing)")
-            }
-
-            let data = info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data
-                    ?? info["artworkData"] as? Data
-            if let data, let img = NSImage(data: data), self.artwork == nil {
-                self.artwork = img
-            }
+            self?.fetchFromMediaRemote()
         }
     }
 }
