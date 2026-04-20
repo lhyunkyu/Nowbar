@@ -185,13 +185,13 @@ struct SideBarNowPlayingView: View {
 
     // MARK: - 물방울 튀어나오기 (오른쪽으로 밀려나오며 뽈롱)
     private func animateIn() {
-        // 초기: 노치 위치에서 납작하게
+        HapticManager.shared.playNowBarAppear()
+
         barOffsetX = -10
         barScaleX  = 0.05
         barScaleY  = 0.2
         barOpacity = 0
 
-        // 1단계: 오른쪽으로 밀리며 X축 펼쳐짐
         withAnimation(.spring(response: 0.40, dampingFraction: 0.55)) {
             barOffsetX = 0
             barScaleX  = 1.0
@@ -202,6 +202,8 @@ struct SideBarNowPlayingView: View {
 
     // MARK: - 노치로 복귀 (왼쪽으로 쏙)
     private func animateOut() {
+        HapticManager.shared.playNowBarDisappear()
+
         withAnimation(.spring(response: 0.22, dampingFraction: 0.90)) {
             barOffsetX = -10
             barScaleX  = 0.05
