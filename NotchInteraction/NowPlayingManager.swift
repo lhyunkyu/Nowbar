@@ -122,12 +122,37 @@ class NowPlayingManager: ObservableObject {
         getNowPlayingInfo?(DispatchQueue.main) { [weak self] info in
             guard let self, !info.isEmpty else { return }
 
-            let newTitle  = info["kMRMediaRemoteNowPlayingInfoTitle"]  as? String ?? ""
-            let newArtist = info["kMRMediaRemoteNowPlayingInfoArtist"] as? String ?? ""
-            let rate      = info["kMRMediaRemoteNowPlayingInfoPlaybackRate"] as? Double ?? 0.0
-            let playing   = rate > 0 && !newTitle.isEmpty
+            // 디버그: 처음 한 번 키 전체 출력 (Chrome 등 미인식 시 확인용)
+            if self.title.isEmpty {
+                NSLog("🔑 MediaRemote keys: \(info.keys.sorted())")
+                NSLog("🔑 MediaRemote values: \(info)")
+            }
 
-            NSLog("🔄 [MediaRemote] \(playing ? "▶" : "■") \(newTitle)")
+            let newTitle  = info["kMRMediaRemoteNowPlayingInfoTitle"]  as? String
+                         ?? info["title"]                               as? String
+                         ?? ""
+            let newArtist = info["kMRMediaRemoteNowPlayingInfoArtist"] as? String
+                         ?? info["artist"]                              as? String
+                         ?? ""
+
+            // isPlaying 판단: 여러 키를 순서대로 시도
+            // 1) PlaybackRate (Spotify·Music·VLC)
+            // 2) IsPlaying 불리언 (일부 플레이어)
+            // 3) 위 둘 다 없으면 타이틀이 있으면 재생 중으로 간주 (Chrome 등 브라우저)
+            let rate      = info["kMRMediaRemoteNowPlayingInfoPlaybackRate"] as? Double
+            let isPlayingFlag = info["kMRMediaRemoteNowPlayingInfoIsPlaying"] as? Bool
+
+            let playing: Bool
+            if let flag = isPlayingFlag {
+                playing = flag && !newTitle.isEmpty
+            } else if let r = rate {
+                playing = r > 0 && !newTitle.isEmpty
+            } else {
+                // Chrome·Safari 등 브라우저: rate 키 없는 경우 타이틀 존재 = 재생 중
+                playing = !newTitle.isEmpty
+            }
+
+            NSLog("🔄 [MediaRemote] \(playing ? "▶" : "■") \(newTitle) | rate=\(rate ?? -1)")
 
             self.applyState(title: newTitle, artist: newArtist, playing: playing)
 
@@ -168,7 +193,7 @@ class NowPlayingManager: ObservableObject {
     // MARK: - 폴링 (알림 놓치는 경우 fallback, 2초마다)
     private func startPolling() {
         fetchFromMediaRemote()
-        pollingTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        pollingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             self?.fetchFromMediaRemote()
         }
     }
