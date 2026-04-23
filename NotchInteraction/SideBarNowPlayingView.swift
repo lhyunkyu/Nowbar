@@ -230,7 +230,7 @@ struct SideBarNowPlayingView: View {
             }
         }
         hideWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5, execute: work)
     }
 
     // MARK: - 대표 색 추출
