@@ -245,7 +245,11 @@ struct SideBarNowPlayingView: View {
 
     // MARK: - 대표 색 추출
     private func refreshAccentColor() {
-        guard let artwork = nowPlaying.artwork else { return }
+        guard let artwork = nowPlaying.artwork else {
+            // 아트워크 없으면 검정 알약
+            withAnimation(.easeInOut(duration: 0.4)) { accentColor = .black }
+            return
+        }
         DispatchQueue.global(qos: .userInitiated).async {
             let raw      = artwork.dominantColor()
             let darkened = raw.blended(withFraction: 0.22, of: .black) ?? raw
