@@ -9,20 +9,11 @@ class NowPlayingManager: ObservableObject {
     @Published var isPlaying: Bool   = false
     @Published var artwork: NSImage? = nil
 
-    // MARK: - MediaRemote 함수 타입
     private typealias MRMediaRemoteGetNowPlayingInfoFunc =
         @convention(c) (DispatchQueue, @escaping ([String: Any]) -> Void) -> Void
-    private typealias MRMediaRemoteRegisterForNowPlayingNotificationsFunc =
-        @convention(c) (DispatchQueue) -> Void
-
     private var getNowPlayingInfo: MRMediaRemoteGetNowPlayingInfoFunc?
     private var pollingTimer: Timer?
-
-    // dlsym으로 읽어온 실제 상수 키 값
-    private var artworkDataKey: String  = "kMRMediaRemoteNowPlayingInfoArtworkData"
-    private var titleKey: String        = "kMRMediaRemoteNowPlayingInfoTitle"
-    private var artistKey: String       = "kMRMediaRemoteNowPlayingInfoArtist"
-    private var playbackRateKey: String = "kMRMediaRemoteNowPlayingInfoPlaybackRate"
+    private var lastTrackID: String = ""   // 곡 변경 감지용
 
     private init() {
         loadMediaRemote()
@@ -30,142 +21,163 @@ class NowPlayingManager: ObservableObject {
         startPolling()
     }
 
-    // MARK: - MediaRemote 로드
+    // MARK: - MediaRemote (로드 시도, 실패해도 폴백 있음)
     private func loadMediaRemote() {
         let path = "/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote"
-
-        // dlopen으로 프레임워크 로드 (상수 심볼 접근용)
-        guard let handle = dlopen(path, RTLD_NOW) else {
-            NSLog("❌ dlopen MediaRemote 실패")
-            return
-        }
-
-        // 실제 상수 문자열 값을 dlsym으로 읽어옴
-        func loadKey(_ symbol: String) -> String {
-            if let ptr = dlsym(handle, symbol) {
-                let cfStr = ptr.assumingMemoryBound(to: CFString.self).pointee
-                return cfStr as String
-            }
-            return symbol   // fallback: 심볼명 그대로 사용
-        }
-
-        artworkDataKey  = loadKey("kMRMediaRemoteNowPlayingInfoArtworkData")
-        titleKey        = loadKey("kMRMediaRemoteNowPlayingInfoTitle")
-        artistKey       = loadKey("kMRMediaRemoteNowPlayingInfoArtist")
-        playbackRateKey = loadKey("kMRMediaRemoteNowPlayingInfoPlaybackRate")
-
-        NSLog("🔑 artworkDataKey  = \(artworkDataKey)")
-        NSLog("🔑 titleKey        = \(titleKey)")
-        NSLog("🔑 artistKey       = \(artistKey)")
-        NSLog("🔑 playbackRateKey = \(playbackRateKey)")
-
-        // CFBundle로 함수 포인터 로드
-        guard let bundle = CFBundleCreate(
-            kCFAllocatorDefault,
-            NSURL(fileURLWithPath: "/System/Library/PrivateFrameworks/MediaRemote.framework")
-        ) else { return }
-
-        if let ptr = CFBundleGetFunctionPointerForName(bundle, "MRMediaRemoteGetNowPlayingInfo" as CFString) {
+        guard let handle = dlopen(path, RTLD_NOW) else { return }
+        if let ptr = dlsym(handle, "MRMediaRemoteGetNowPlayingInfo") {
             getNowPlayingInfo = unsafeBitCast(ptr, to: MRMediaRemoteGetNowPlayingInfoFunc.self)
-            NSLog("✅ MRMediaRemoteGetNowPlayingInfo 로드")
-        }
-
-        if let ptr = CFBundleGetFunctionPointerForName(
-            bundle, "MRMediaRemoteRegisterForNowPlayingNotifications" as CFString
-        ) {
-            let register = unsafeBitCast(ptr, to: MRMediaRemoteRegisterForNowPlayingNotificationsFunc.self)
-            register(DispatchQueue.main)
-            NSLog("✅ MRMediaRemoteRegisterForNowPlayingNotifications 등록")
-        }
-
-        let nc = NotificationCenter.default
-        for name in [
-            "kMRMediaRemoteNowPlayingInfoDidChangeNotification",
-            "kMRMediaRemoteNowPlayingApplicationDidChangeNotification",
-            "kMRMediaRemoteNowPlayingApplicationIsPlayingDidChangeNotification",
-        ] {
-            nc.addObserver(self, selector: #selector(handleMediaRemoteNotification),
-                           name: NSNotification.Name(name), object: nil)
+            NSLog("✅ MediaRemote 함수 로드")
         }
     }
 
-    @objc private func handleMediaRemoteNotification(_ note: Notification) {
-        NSLog("🔔 MediaRemote 알림: \(note.name.rawValue)")
-        fetchFromMediaRemote()
-    }
-
-    // MARK: - 앱별 Distributed Notifications
+    // MARK: - Distributed Notifications 등록
     private func registerAppNotifications() {
         let dnc = DistributedNotificationCenter.default()
-        let appNotifications: [(String, String)] = [
-            ("com.spotify.client.PlaybackStateChanged", "handleSpotify:"),
-            ("com.apple.Music.playerInfo",              "handleAppleMusic:"),
-            ("com.apple.iTunes.playerInfo",             "handleAppleMusic:"),
-            ("com.coppertino.Vox.trackChanged",         "handleGenericDNC:"),
-            ("com.brushedtype.doppler.playbackState",   "handleGenericDNC:"),
-        ]
-        for (name, sel) in appNotifications {
-            dnc.addObserver(self, selector: Selector(sel),
-                            name: NSNotification.Name(name), object: nil)
+
+        dnc.addObserver(forName: NSNotification.Name("com.spotify.client.PlaybackStateChanged"),
+                        object: nil, queue: .main) { [weak self] note in self?.handleSpotify(note) }
+
+        dnc.addObserver(forName: NSNotification.Name("com.apple.Music.playerInfo"),
+                        object: nil, queue: .main) { [weak self] note in self?.handleAppleMusic(note) }
+
+        dnc.addObserver(forName: NSNotification.Name("com.apple.iTunes.playerInfo"),
+                        object: nil, queue: .main) { [weak self] note in self?.handleAppleMusic(note) }
+
+        NSLog("✅ Distributed Notification 등록 완료")
+    }
+
+    // MARK: - Spotify 핸들러
+    private func handleSpotify(_ note: Notification) {
+        let info  = note.userInfo ?? [:]
+        let state = info["Player State"] as? String ?? ""
+        let name  = info["Name"]         as? String ?? ""
+        let art   = info["Artist"]       as? String ?? ""
+        let trackID = info["Track ID"]   as? String ?? name
+
+        NSLog("🎵 [Spotify] \(state) – \(name)")
+        NSLog("🔑 [Spotify] 전체 키: \(info.keys.compactMap { $0 as? String }.sorted())")
+
+        let playing = state == "Playing" && !name.isEmpty
+        applyState(title: name, artist: art, playing: playing)
+
+        if playing {
+            if trackID != lastTrackID {
+                lastTrackID = trackID
+                // oEmbed API로 아트워크 URL 가져오기 (API 키 불필요)
+                fetchSpotifyArtwork(trackID: trackID)
+            }
+        } else {
+            artwork = nil
         }
     }
 
-    @objc private func handleSpotify(_ note: Notification) {
+    // MARK: - Apple Music 핸들러
+    private func handleAppleMusic(_ note: Notification) {
         let info  = note.userInfo ?? [:]
         let state = info["Player State"] as? String ?? ""
         let name  = info["Name"]         as? String ?? ""
         let art   = info["Artist"]       as? String ?? ""
-        NSLog("🎵 [Spotify] \(state) – \(name)")
-        applyState(title: name, artist: art, playing: state == "Playing" && !name.isEmpty)
-    }
 
-    @objc private func handleAppleMusic(_ note: Notification) {
-        let info  = note.userInfo ?? [:]
-        let state = info["Player State"] as? String ?? ""
-        let name  = info["Name"]         as? String ?? ""
-        let art   = info["Artist"]       as? String ?? ""
         NSLog("🎵 [Music] \(state) – \(name)")
-        applyState(title: name, artist: art, playing: state == "Playing" && !name.isEmpty)
+
+        let playing = state == "Playing" && !name.isEmpty
+        applyState(title: name, artist: art, playing: playing)
+
+        if playing {
+            // Apple Music: AppleScript로 아트워크 직접 가져옴
+            fetchArtworkAppleScript(app: "Music")
+        } else {
+            artwork = nil
+        }
     }
 
-    @objc private func handleGenericDNC(_ note: Notification) {
-        NSLog("🔔 [Generic DNC] \(note.name.rawValue)")
-        fetchFromMediaRemote()
-    }
+    // MARK: - AppleScript 아트워크 (Apple Music 전용, 가장 확실한 방법)
+    private func fetchArtworkAppleScript(app: String) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let src = """
+            tell application "\(app)"
+                try
+                    if player state is playing then
+                        set art to data of artwork 1 of current track
+                        return art
+                    end if
+                end try
+            end tell
+            """
+            guard let script = NSAppleScript(source: src) else { return }
+            var err: NSDictionary?
+            let result = script.executeAndReturnError(&err)
 
-    // MARK: - MediaRemote fetch
-    func fetchFromMediaRemote() {
-        getNowPlayingInfo?(DispatchQueue.main) { [weak self] info in
-            guard let self, !info.isEmpty else { return }
-
-            // 항상 키 목록 로그 (아트워크 디버그용)
-            NSLog("🔑 keys: \(info.keys.sorted())")
-
-            let newTitle  = info[self.titleKey]  as? String ?? info["title"]  as? String ?? ""
-            let newArtist = info[self.artistKey] as? String ?? info["artist"] as? String ?? ""
-
-            let rate          = info[self.playbackRateKey] as? Double
-            let isPlayingFlag = info["kMRMediaRemoteNowPlayingInfoIsPlaying"] as? Bool
-            let playing: Bool
-            if let flag = isPlayingFlag   { playing = flag && !newTitle.isEmpty }
-            else if let r = rate          { playing = r > 0 && !newTitle.isEmpty }
-            else                          { playing = !newTitle.isEmpty }
-
-            NSLog("🔄 [MediaRemote] \(playing ? "▶" : "■") \(newTitle)")
-
-            self.applyState(title: newTitle, artist: newArtist, playing: playing)
-
-            // 아트워크: 실제 키 사용 + NSData 폴백
-            let artData = info[self.artworkDataKey] as? Data
-                       ?? (info[self.artworkDataKey] as? NSData).map { Data($0) }
-                       ?? info["artworkData"] as? Data
-
-            if let data = artData, !data.isEmpty, let img = NSImage(data: data) {
-                NSLog("🖼️ 아트워크 수신 (\(data.count) bytes)")
-                self.artwork = img
+            if let e = err {
+                NSLog("❌ AppleScript 오류: \(e)")
+                return
+            }
+            // 결과가 raw data이면 NSImage로 변환
+            let rawData = result.data
+            if !rawData.isEmpty, let img = NSImage(data: rawData) {
+                DispatchQueue.main.async {
+                    NSLog("🖼️ AppleScript 아트워크 성공")
+                    self?.artwork = img
+                }
             } else {
-                NSLog("🖼️ 아트워크 없음 (artworkDataKey=\(self.artworkDataKey))")
-                if !playing { self.artwork = nil }
+                NSLog("⚠️ AppleScript 결과 타입: \(result.descriptorType)")
+            }
+        }
+    }
+
+    // MARK: - Spotify oEmbed API로 아트워크 가져오기 (API 키 불필요)
+    private func fetchSpotifyArtwork(trackID: String) {
+        // Track ID가 "spotify:track:XXXX" 형식이면 그대로, 아니면 uri로 감쌈
+        let spotifyURI = trackID.hasPrefix("spotify:") ? trackID : "spotify:track:\(trackID)"
+        guard let encoded = spotifyURI.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let oembedURL = URL(string: "https://open.spotify.com/oembed?url=\(encoded)") else { return }
+
+        NSLog("🌐 Spotify oEmbed 요청: \(oembedURL)")
+        URLSession.shared.dataTask(with: oembedURL) { [weak self] data, _, error in
+            if let error { NSLog("❌ oEmbed 오류: \(error)"); return }
+            guard let data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let thumbStr = json["thumbnail_url"] as? String,
+                  let thumbURL = URL(string: thumbStr) else {
+                NSLog("❌ oEmbed 파싱 실패")
+                return
+            }
+            NSLog("🖼️ 아트워크 URL: \(thumbStr)")
+            URLSession.shared.dataTask(with: thumbURL) { [weak self] imgData, _, _ in
+                guard let imgData, let img = NSImage(data: imgData) else { return }
+                DispatchQueue.main.async {
+                    NSLog("🖼️ Spotify 아트워크 수신 성공")
+                    self?.artwork = img
+                }
+            }.resume()
+        }.resume()
+    }
+
+    // MARK: - URL에서 아트워크 다운로드 (범용)
+    private func fetchArtworkFromURL(_ url: URL) {
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            guard let data, let img = NSImage(data: data) else { return }
+            DispatchQueue.main.async {
+                NSLog("🖼️ URL 아트워크 성공: \(url)")
+                self?.artwork = img
+            }
+        }.resume()
+    }
+
+    // MARK: - MediaRemote 아트워크 (폴백)
+    private func fetchArtworkMediaRemote(retries: Int = 3) {
+        getNowPlayingInfo?(DispatchQueue.main) { [weak self] info in
+            guard let self else { return }
+            let data = info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data
+            if let data, !data.isEmpty, let img = NSImage(data: data) {
+                NSLog("🖼️ MediaRemote 아트워크 성공 (\(data.count) bytes)")
+                self.artwork = img
+            } else if retries > 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                    guard self?.isPlaying == true else { return }
+                    self?.fetchArtworkMediaRemote(retries: retries - 1)
+                }
             }
         }
     }
@@ -177,41 +189,48 @@ class NowPlayingManager: ObservableObject {
             if self.title     != newTitle   { self.title   = newTitle }
             if self.artist    != newArtist  { self.artist  = newArtist }
             if self.isPlaying != newPlaying { self.isPlaying = newPlaying }
-
-            if newPlaying { self.fetchArtworkWithRetry() }
-            else          { self.artwork = nil }
+            if !newPlaying { self.artwork = nil }
         }
     }
 
-    // MARK: - 아트워크 재시도 fetch
-    private func fetchArtworkWithRetry(retries: Int = 5) {
-        getNowPlayingInfo?(DispatchQueue.main) { [weak self] info in
-            guard let self else { return }
-
-            let artData = info[self.artworkDataKey] as? Data
-                       ?? (info[self.artworkDataKey] as? NSData).map { Data($0) }
-                       ?? info["artworkData"] as? Data
-
-            if let data = artData, !data.isEmpty, let img = NSImage(data: data) {
-                NSLog("🖼️ 아트워크 재시도 성공 (\(data.count) bytes)")
-                self.artwork = img
-            } else if retries > 0 {
-                NSLog("🖼️ 아트워크 재시도 \(retries)회 남음")
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                    guard self?.isPlaying == true else { return }
-                    self?.fetchArtworkWithRetry(retries: retries - 1)
-                }
-            } else {
-                NSLog("🖼️ 아트워크 최종 실패")
-            }
-        }
-    }
-
-    // MARK: - 폴링
+    // MARK: - 폴링 (Distributed Notification 누락 대비)
     private func startPolling() {
-        fetchFromMediaRemote()
-        pollingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.fetchFromMediaRemote()
+        pollingTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            self?.pollAppleMusic()
+        }
+    }
+
+    private func pollAppleMusic() {
+        // AppleScript로 현재 재생 상태 체크 (Distributed Notification 못 받은 경우)
+        DispatchQueue.global(qos: .background).async { [weak self] in
+            let src = """
+            tell application "Music"
+                try
+                    set s to player state as string
+                    set n to name of current track
+                    set a to artist of current track
+                    return s & "||" & n & "||" & a
+                end try
+            end tell
+            """
+            guard let script = NSAppleScript(source: src) else { return }
+            var err: NSDictionary?
+            let result = script.executeAndReturnError(&err)
+            guard err == nil, let str = result.stringValue else { return }
+
+            let parts = str.components(separatedBy: "||")
+            guard parts.count >= 3 else { return }
+            let state  = parts[0]
+            let name   = parts[1]
+            let artist = parts[2]
+            let playing = state == "playing" && !name.isEmpty
+
+            DispatchQueue.main.async {
+                self?.applyState(title: name, artist: artist, playing: playing)
+                if playing && self?.artwork == nil {
+                    self?.fetchArtworkAppleScript(app: "Music")
+                }
+            }
         }
     }
 }
