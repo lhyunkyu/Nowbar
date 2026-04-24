@@ -219,6 +219,16 @@ struct SideBarNowPlayingView: View {
         isShowingBar  = true
         waveAnimating = true
         refreshAccentColor()
+
+        // 아트워크가 늦게 도착하는 경우를 위해 1·2초 후 추가 갱신
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            guard self.isShowingBar else { return }
+            self.refreshAccentColor()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            guard self.isShowingBar else { return }
+            self.refreshAccentColor()
+        }
     }
 
     private func triggerHide() {
