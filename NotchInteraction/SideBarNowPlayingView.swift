@@ -107,7 +107,7 @@ struct TickerText: View {
     }
 }
 
-// MARK: - 실시간 나우바
+// MARK: - 실시간 나우바 (콜랩스 + 확장 모드)
 struct SideBarNowPlayingView: View {
     @ObservedObject var state      = NotchState.shared
     @ObservedObject var nowPlaying = NowPlayingManager.shared
@@ -119,20 +119,91 @@ struct SideBarNowPlayingView: View {
     @State private var fgColor:       Color = .white   // 배경 밝기에 따라 검정/흰색
     @State private var hideWorkItem:  DispatchWorkItem? = nil
 
-    // 애니메이션용 상태
+    // 컨테이너 등장/사라짐 애니메이션
     @State private var barOffsetX:  CGFloat = -10
     @State private var barScaleX:   CGFloat = 0.05
     @State private var barScaleY:   CGFloat = 0.2
     @State private var barOpacity:  Double  = 0
 
+    /// 노치 영역의 픽셀 높이 (윈도우 collapsed 높이와 동일)
+    private let notchBarHeight: CGFloat = 37
+    private let collapsedPillHeight: CGFloat = 28
+    private let expandedPillWidth: CGFloat   = 320
+    private let expandedPillHeight: CGFloat  = 96
+
+    /// 알약 top 위치 — 작은 알약은 노치 안에 수직 가운데, 확장은 동일한 top에서 그대로 아래로 커짐
+    private var topPadding: CGFloat { (notchBarHeight - collapsedPillHeight) / 2 }
+
     var shouldRender: Bool {
         isShowingBar &&
-        state.proximity <= 0.08 &&
-        !state.isExpanded &&
-        !AlertWindowManager.shared.isVisible
+        !AlertWindowManager.shared.isVisible &&
+        (state.isSideBarExpanded ||
+         (state.proximity <= 0.08 && !state.isExpanded))
     }
 
     var body: some View {
+        ZStack(alignment: .topLeading) {
+            // 확장 상태에서 알약 바깥(윈도우 라운드 코너 등 빈 영역) 탭 → 축소
+            if state.isSideBarExpanded {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        state.isSideBarExpanded = false
+                    }
+            }
+
+            Group {
+                if state.isSideBarExpanded {
+                    expandedPill
+                        .transition(.asymmetric(
+                            insertion: .scale(scale: 0.35, anchor: .topLeading).combined(with: .opacity),
+                            removal:   .scale(scale: 0.35, anchor: .topLeading).combined(with: .opacity)
+                        ))
+                } else {
+                    collapsedPill
+                        .transition(.asymmetric(
+                            insertion: .scale(scale: 0.6, anchor: .topLeading).combined(with: .opacity),
+                            removal:   .scale(scale: 0.6, anchor: .topLeading).combined(with: .opacity)
+                        ))
+                }
+            }
+            .padding(.leading, 6)
+            .padding(.top, topPadding)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .animation(.spring(response: 0.42, dampingFraction: 0.78), value: state.isSideBarExpanded)
+
+        // 컨테이너 전체의 등장/사라짐 (음악 재생 시작/종료 시)
+        .scaleEffect(x: barScaleX, y: barScaleY, anchor: .topLeading)
+        .offset(x: barOffsetX)
+        .opacity(barOpacity)
+
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { appeared = true }
+            if nowPlaying.isPlaying { triggerShow() }
+        }
+        .onChange(of: nowPlaying.isPlaying) { playing in
+            playing ? triggerShow() : triggerHide()
+        }
+        .onChange(of: shouldRender) { show in
+            if show { animateIn() } else { animateOut() }
+        }
+        .onChange(of: nowPlaying.artwork) { _ in refreshAccentColor() }
+        .onChange(of: nowPlaying.title)   { _ in refreshAccentColor() }
+        .onChange(of: state.isSideBarExpanded) { expanded in
+            if expanded {
+                HapticManager.shared.playNowBarAppear()
+                nowPlaying.startPositionPolling()
+            } else {
+                HapticManager.shared.playNowBarDisappear()
+                nowPlaying.stopPositionPolling()
+            }
+        }
+    }
+
+    // MARK: - 콜랩스(작은) 알약
+    @ViewBuilder
+    private var collapsedPill: some View {
         HStack(spacing: 7) {
             // 앨범 아트
             if let artwork = nowPlaying.artwork {
@@ -163,27 +234,31 @@ struct SideBarNowPlayingView: View {
                 .frame(width: 14, height: 12)
         }
         .padding(.horizontal, 12)
-        .frame(height: 28)
+        .frame(height: collapsedPillHeight)
         .background(Capsule().fill(accentColor))
-        // ── 오른쪽으로 튀어나오는 물방울 애니메이션
-        .scaleEffect(x: barScaleX, y: barScaleY, anchor: .leading)
-        .offset(x: barOffsetX)
-        .opacity(barOpacity)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .padding(.leading, 6)
+        .contentShape(Capsule())
+        .onTapGesture {
+            // 클릭 → 확장
+            state.isSideBarExpanded = true
+        }
+    }
 
-        .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { appeared = true }
-            if nowPlaying.isPlaying { triggerShow() }
-        }
-        .onChange(of: nowPlaying.isPlaying) { playing in
-            playing ? triggerShow() : triggerHide()
-        }
-        .onChange(of: shouldRender) { show in
-            if show { animateIn() } else { animateOut() }
-        }
-        .onChange(of: nowPlaying.artwork) { _ in refreshAccentColor() }
-        .onChange(of: nowPlaying.title)   { _ in refreshAccentColor() }
+    // MARK: - 확장(3배 큰) 알약
+    @ViewBuilder
+    private var expandedPill: some View {
+        ExpandedNowBarContent(
+            nowPlaying: nowPlaying,
+            fgColor:    fgColor
+        )
+        .frame(width: expandedPillWidth, height: expandedPillHeight)
+        .background(
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .fill(accentColor)
+                .shadow(color: .black.opacity(0.35), radius: 18, x: 0, y: 8)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+        // 알약 본체 탭은 흡수 (뒤의 Color.clear까지 떨어져 축소되지 않게)
+        .onTapGesture { /* no-op */ }
     }
 
     // MARK: - 물방울 튀어나오기 (오른쪽으로 밀려나오며 뽈롱)
@@ -238,6 +313,8 @@ struct SideBarNowPlayingView: View {
         waveAnimating = false
         let work = DispatchWorkItem {
             isShowingBar = false
+            // 사라질 때 확장도 닫음
+            if state.isSideBarExpanded { state.isSideBarExpanded = false }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 accentColor = .black
             }
@@ -273,6 +350,136 @@ struct SideBarNowPlayingView: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - 확장 알약 컨텐츠 (앨범아트 + 곡정보 + 진행바 + 컨트롤)
+struct ExpandedNowBarContent: View {
+    @ObservedObject var nowPlaying: NowPlayingManager
+    var fgColor: Color
+
+    private var progress: Double {
+        guard nowPlaying.duration > 0 else { return 0 }
+        return min(1.0, max(0, nowPlaying.position / nowPlaying.duration))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // 상단: 앨범 아트 + 제목/아티스트
+            HStack(spacing: 11) {
+                if let art = nowPlaying.artwork {
+                    Image(nsImage: art)
+                        .resizable().aspectRatio(contentMode: .fill)
+                        .frame(width: 40, height: 40)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .shadow(color: .black.opacity(0.25), radius: 4, x: 0, y: 2)
+                } else {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(fgColor.opacity(0.18))
+                        .frame(width: 40, height: 40)
+                        .overlay(
+                            Image(systemName: "music.note")
+                                .foregroundColor(fgColor.opacity(0.7))
+                        )
+                }
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(nowPlaying.title.isEmpty ? "재생 중인 음악 없음" : nowPlaying.title)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundColor(fgColor)
+                        .lineLimit(1).truncationMode(.tail)
+                    Text(nowPlaying.artist.isEmpty ? " " : nowPlaying.artist)
+                        .font(.system(size: 10.5))
+                        .foregroundColor(fgColor.opacity(0.65))
+                        .lineLimit(1).truncationMode(.tail)
+                }
+                Spacer(minLength: 0)
+            }
+
+            // 진행바 + 시간
+            VStack(spacing: 3) {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(fgColor.opacity(0.20))
+                        Capsule().fill(fgColor.opacity(0.90))
+                            .frame(width: max(0, geo.size.width * CGFloat(progress)))
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { location in
+                        guard nowPlaying.duration > 0, geo.size.width > 0 else { return }
+                        let ratio = max(0, min(1, location.x / geo.size.width))
+                        nowPlaying.seek(to: ratio * nowPlaying.duration)
+                    }
+                }
+                .frame(height: 3)
+
+                HStack {
+                    Text(formatTime(nowPlaying.position))
+                        .font(.system(size: 9, weight: .medium, design: .rounded))
+                        .foregroundColor(fgColor.opacity(0.55))
+                        .monospacedDigit()
+                    Spacer()
+                    Text(formatTime(nowPlaying.duration))
+                        .font(.system(size: 9, weight: .medium, design: .rounded))
+                        .foregroundColor(fgColor.opacity(0.55))
+                        .monospacedDigit()
+                }
+            }
+
+            // 컨트롤 버튼
+            HStack(spacing: 0) {
+                Spacer()
+                ControlButton(systemName: "backward.fill", size: 14) {
+                    nowPlaying.previousTrack()
+                }
+                .padding(.horizontal, 18)
+
+                ControlButton(
+                    systemName: nowPlaying.isPlaying ? "pause.fill" : "play.fill",
+                    size: 18
+                ) {
+                    nowPlaying.playPause()
+                }
+                .padding(.horizontal, 6)
+
+                ControlButton(systemName: "forward.fill", size: 14) {
+                    nowPlaying.nextTrack()
+                }
+                .padding(.horizontal, 18)
+                Spacer()
+            }
+            .foregroundColor(fgColor)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    private func formatTime(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds > 0 else { return "0:00" }
+        let total = Int(seconds)
+        return String(format: "%d:%02d", total / 60, total % 60)
+    }
+}
+
+// MARK: - 컨트롤 버튼 (호버 효과)
+private struct ControlButton: View {
+    let systemName: String
+    let size: CGFloat
+    let action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: size, weight: .semibold))
+                .frame(width: size + 12, height: size + 12)
+                .contentShape(Rectangle())
+                .opacity(hover ? 0.65 : 1.0)
+                .scaleEffect(hover ? 1.08 : 1.0)
+                .animation(.easeOut(duration: 0.12), value: hover)
+        }
+        .buttonStyle(.plain)
+        .onHover { hover = $0 }
     }
 }
 

@@ -1,5 +1,6 @@
 import Cocoa
 import SwiftUI
+import Combine
 
 class AppDelegate: NSObject, NSApplicationDelegate {
 
@@ -8,12 +9,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var sideBarWindow: NSWindow?
     var mouseMonitor: Any?
     var clickMonitor: Any?
+    var localClickMonitor: Any?
+    private var cancellables = Set<AnyCancellable>()
 
     let notchWidth: CGFloat     = 190
     let notchHeight: CGFloat    = 37
     let notchHalfWidth: CGFloat = 120
     let nowBarWidth: CGFloat    = 520
     let nowBarHeight: CGFloat   = 160
+
+    // 사이드바 윈도우 크기 (collapsed / expanded)
+    let sideBarCollapsedWidth: CGFloat  = 220
+    let sideBarExpandedWidth: CGFloat   = 340
+    let sideBarExpandedHeight: CGFloat  = 110
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSLog("🚀 NowBar 시작")
@@ -30,8 +38,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        if let m = mouseMonitor { NSEvent.removeMonitor(m) }
-        if let m = clickMonitor { NSEvent.removeMonitor(m) }
+        if let m = mouseMonitor      { NSEvent.removeMonitor(m) }
+        if let m = clickMonitor      { NSEvent.removeMonitor(m) }
+        if let m = localClickMonitor { NSEvent.removeMonitor(m) }
     }
 
     func requestAccessibilityIfNeeded() {
@@ -62,11 +71,41 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func setupSideBarWindow() {
         guard let screen = NSScreen.screens.first else { return }
         let sf = screen.frame
-        let rect = NSRect(x: sf.width / 2 + notchHalfWidth + 8, y: sf.height - notchHeight, width: 220, height: notchHeight)
-        let win = makeWindow(rect: rect, ignoresMouse: true)
+        let rect = NSRect(
+            x: sf.width / 2 + notchHalfWidth + 8,
+            y: sf.height - notchHeight,
+            width: sideBarCollapsedWidth,
+            height: notchHeight
+        )
+        // 알약 클릭 받으려면 마우스 이벤트 수신 필요
+        let win = makeWindow(rect: rect, ignoresMouse: false)
         win.contentView = NSHostingView(rootView: SideBarNowPlayingView())
         sideBarWindow = win
         win.orderFrontRegardless()
+
+        // 확장 상태 변화 → 윈도우 프레임 리사이즈
+        NotchState.shared.$isSideBarExpanded
+            .removeDuplicates()
+            .sink { [weak self] expanded in
+                self?.resizeSideBarWindow(expanded: expanded)
+            }
+            .store(in: &cancellables)
+    }
+
+    /// 확장 상태에 따라 사이드바 윈도우 프레임 변경 (top 고정, 높이/너비 확장)
+    func resizeSideBarWindow(expanded: Bool) {
+        guard let win = sideBarWindow, let screen = NSScreen.screens.first else { return }
+        let sf = screen.frame
+        let height = expanded ? sideBarExpandedHeight : notchHeight
+        let width  = expanded ? sideBarExpandedWidth  : sideBarCollapsedWidth
+        // top edge가 항상 화면 상단 = 노치 상단에 붙도록 y 계산
+        let newRect = NSRect(
+            x: sf.width / 2 + notchHalfWidth + 8,
+            y: sf.height - height,
+            width: width,
+            height: height
+        )
+        win.animator().setFrame(newRect, display: true, animate: true)
     }
 
     private func makeWindow(rect: NSRect, ignoresMouse: Bool) -> NSWindow {
@@ -98,6 +137,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if !notchRect.contains(mouse) {
                 DispatchQueue.main.async { NotchState.shared.isExpanded = false }
             }
+
+            // 사이드바가 확장된 상태에서 사이드바 윈도우 외부 클릭 → 축소
+            if NotchState.shared.isSideBarExpanded,
+               let sideWin = self.sideBarWindow,
+               !sideWin.frame.contains(mouse) {
+                DispatchQueue.main.async {
+                    withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
+                        NotchState.shared.isSideBarExpanded = false
+                    }
+                }
+            }
+        }
+
+        // 앱 내부 다른 윈도우 클릭 시에도 사이드바 축소 처리
+        localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
+            guard let self else { return event }
+            if NotchState.shared.isSideBarExpanded,
+               let sideWin = self.sideBarWindow,
+               event.window !== sideWin {
+                DispatchQueue.main.async {
+                    withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
+                        NotchState.shared.isSideBarExpanded = false
+                    }
+                }
+            }
+            return event
         }
     }
 

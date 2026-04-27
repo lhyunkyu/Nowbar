@@ -22,5 +22,14 @@ class NotchState: ObservableObject {
         }
     }
 
+    /// 사이드바 나우바(알약) 확장 상태. true면 노치 아래로 3배 크기로 드롭다운.
+    @Published var isSideBarExpanded: Bool = false {
+        didSet {
+            if oldValue != isSideBarExpanded {
+                NotificationCenter.default.post(name: .nowBarProximityChanged, object: nil)
+            }
+        }
+    }
+
     private init() {}
 }
