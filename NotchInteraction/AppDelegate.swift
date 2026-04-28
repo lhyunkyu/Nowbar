@@ -25,7 +25,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // 사이드바 윈도우 크기 (collapsed / expanded)
     let sideBarCollapsedWidth: CGFloat  = 220
     let sideBarExpandedWidth: CGFloat   = 340
-    let sideBarExpandedHeight: CGFloat  = 160
+    let sideBarExpandedHeight: CGFloat  = 180
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSLog("🚀 NowBar 시작")

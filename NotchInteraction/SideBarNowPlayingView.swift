@@ -21,7 +21,7 @@ struct SideBarNowPlayingView: View {
     private let notchBarHeight:      CGFloat = 37
     private let collapsedPillHeight: CGFloat = 28
     private let expandedPillWidth:   CGFloat = 320
-    private let expandedPillHeight:  CGFloat = 96
+    private let expandedPillHeight:  CGFloat = 116
 
     private var topPadding: CGFloat {
         state.isSideBarExpanded ? 34 : (notchBarHeight - collapsedPillHeight) / 2

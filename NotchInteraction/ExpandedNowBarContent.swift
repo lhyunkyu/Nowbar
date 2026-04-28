@@ -37,10 +37,10 @@ struct ExpandedNowBarContent: View {
         HStack(spacing: 10) {
             FlippingArtworkView(
                 artwork:             nowPlaying.artwork,
-                size:                30,
-                cornerRadius:        6,
+                size:                44,
+                cornerRadius:        8,
                 fgColor:             fgColor,
-                placeholderIconSize: 13
+                placeholderIconSize: 18
             )
             VStack(alignment: .leading, spacing: 0) {
                 Text(nowPlaying.title.isEmpty ? "재생 중인 음악 없음" : nowPlaying.title)
