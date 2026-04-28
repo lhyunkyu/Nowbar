@@ -2,7 +2,7 @@ import Cocoa
 import SwiftUI
 import Combine
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     var notchBarWindow: NSWindow?
     var nowBarWindow: NSWindow?
@@ -42,6 +42,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         startMonitoring()
     }
 
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        return false  // 창 닫아도 앱 유지
+    }
+
+    // X 버튼 → 실제로 닫지 않고 숨기기만 (댕글링 포인터 방지)
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        sender.orderOut(nil)
+        return false
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         if let m = mouseMonitor      { NSEvent.removeMonitor(m) }
         if let m = clickMonitor      { NSEvent.removeMonitor(m) }
@@ -56,7 +66,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "music.note", accessibilityDescription: "Nowbar")
+            button.image = NSImage(systemSymbolName: "capsule.fill", accessibilityDescription: "Nowbar")
             button.image?.isTemplate = true
             button.action = #selector(toggleSettingsWindow)
             button.target = self
@@ -64,11 +74,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func toggleSettingsWindow() {
-        if let win = settingsWindow, win.isVisible {
-            win.close()
+        if let win = settingsWindow {
+            // 이미 창이 있으면 보이기/숨기기 토글
+            if win.isVisible {
+                win.orderOut(nil)
+            } else {
+                win.makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
+            }
             return
         }
 
+        // 창 최초 생성
         let win = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 320, height: 200),
             styleMask: [.titled, .closable, .fullSizeContentView],
@@ -81,6 +98,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         win.contentView = NSHostingView(rootView: SettingsView())
         win.center()
         win.setFrameAutosaveName("NowbarSettings")
+        win.isReleasedWhenClosed = false  // 닫혀도 메모리 유지
+        win.delegate = self
         win.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow = win
