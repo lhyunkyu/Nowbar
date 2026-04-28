@@ -135,7 +135,7 @@ struct SideBarNowPlayingView: View {
     /// - 콜랩스: 노치 안에 수직 가운데
     /// - 확장: 알림센터 스타일로 노치보다 한참 아래 (약 46pt)
     private var topPadding: CGFloat {
-        state.isSideBarExpanded ? 46 : (notchBarHeight - collapsedPillHeight) / 2
+        state.isSideBarExpanded ? 34 : (notchBarHeight - collapsedPillHeight) / 2
     }
 
     var shouldRender: Bool {
