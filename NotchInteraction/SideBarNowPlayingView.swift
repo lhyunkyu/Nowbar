@@ -216,21 +216,14 @@ struct SideBarNowPlayingView: View {
     @ViewBuilder
     private var collapsedPill: some View {
         HStack(spacing: 7) {
-            // 앨범 아트
-            if let artwork = nowPlaying.artwork {
-                Image(nsImage: artwork)
-                    .resizable().aspectRatio(contentMode: .fill)
-                    .frame(width: 22, height: 22)
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
-            } else {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(fgColor.opacity(0.2)).frame(width: 22, height: 22)
-                    Image(systemName: "music.note")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(fgColor.opacity(0.9))
-                }
-            }
+            // 앨범 아트 (트랙 변경 시 플립 애니메이션)
+            FlippingArtworkView(
+                artwork:             nowPlaying.artwork,
+                size:                22,
+                cornerRadius:        5,
+                fgColor:             fgColor,
+                placeholderIconSize: 10
+            )
 
             // 뉴스 티커 스크롤 제목
             TickerText(
@@ -408,20 +401,13 @@ struct ExpandedNowBarContent: View {
         VStack(alignment: .leading, spacing: 2) {
             // 상단: 앨범 아트 + 제목/아티스트 (탭 → 해당 앱 열기)
             HStack(spacing: 10) {
-                if let art = nowPlaying.artwork {
-                    Image(nsImage: art)
-                        .resizable().aspectRatio(contentMode: .fill)
-                        .frame(width: 30, height: 30)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                } else {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(fgColor.opacity(0.18))
-                        .frame(width: 30, height: 30)
-                        .overlay(
-                            Image(systemName: "music.note")
-                                .foregroundColor(fgColor.opacity(0.7))
-                        )
-                }
+                FlippingArtworkView(
+                    artwork:             nowPlaying.artwork,
+                    size:                30,
+                    cornerRadius:        6,
+                    fgColor:             fgColor,
+                    placeholderIconSize: 13
+                )
 
                 VStack(alignment: .leading, spacing: 0) {
                     Text(nowPlaying.title.isEmpty ? "재생 중인 음악 없음" : nowPlaying.title)
@@ -568,6 +554,50 @@ private struct ControlButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hover = $0 }
+    }
+}
+
+// MARK: - 앨범아트 플립 애니메이션
+struct FlippingArtworkView: View {
+    let artwork: NSImage?
+    let size: CGFloat
+    let cornerRadius: CGFloat
+    let fgColor: Color
+    let placeholderIconSize: CGFloat
+
+    @State private var displayed: NSImage? = nil
+    @State private var rotation: Double    = 0
+
+    var body: some View {
+        Group {
+            if let art = displayed {
+                Image(nsImage: art)
+                    .resizable().aspectRatio(contentMode: .fill)
+                    .frame(width: size, height: size)
+                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .fill(fgColor.opacity(0.2))
+                        .frame(width: size, height: size)
+                    Image(systemName: "music.note")
+                        .font(.system(size: placeholderIconSize, weight: .medium))
+                        .foregroundColor(fgColor.opacity(0.9))
+                }
+            }
+        }
+        .rotation3DEffect(.degrees(rotation), axis: (x: 0, y: 1, z: 0))
+        .onAppear { displayed = artwork }
+        .onChange(of: artwork) { newArtwork in
+            // Phase 1: 오른쪽으로 90° 돌아가며 사라짐
+            withAnimation(.easeIn(duration: 0.16)) { rotation = 90 }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
+                displayed = newArtwork
+                rotation  = -90
+                // Phase 2: 왼쪽에서 0°로 들어오며 등장
+                withAnimation(.easeOut(duration: 0.16)) { rotation = 0 }
+            }
+        }
     }
 }
 
