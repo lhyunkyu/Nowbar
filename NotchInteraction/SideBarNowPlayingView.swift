@@ -143,7 +143,6 @@ struct SideBarNowPlayingView: View {
 
     var shouldRender: Bool {
         isShowingBar &&
-        !AlertWindowManager.shared.isVisible &&
         (state.isSideBarExpanded ||
          (state.proximity <= 0.08 && !state.isExpanded))
     }
