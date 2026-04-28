@@ -21,6 +21,7 @@
 		A012 /* NotifRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B012 /* NotifRow.swift */; };
 		A013 /* AlertWindowManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B013 /* AlertWindowManager.swift */; };
 		A014 /* AlertPopupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B014 /* AlertPopupView.swift */; };
+		E3F72F672FA04B930061D5E4 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3F72F662FA04B930061D5E4 /* SettingsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -41,6 +42,7 @@
 		B014 /* AlertPopupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertPopupView.swift; sourceTree = "<group>"; };
 		B015 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		E3DD41FF2F8E84FC00DB655E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		E3F72F662FA04B930061D5E4 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -68,6 +70,7 @@
 			children = (
 				B001 /* NotchInteractionApp.swift */,
 				B002 /* AppDelegate.swift */,
+				E3F72F662FA04B930061D5E4 /* SettingsView.swift */,
 				B003 /* NotchState.swift */,
 				B004 /* NowBarOverlayView.swift */,
 				B005 /* NowPlayingManager.swift */,
@@ -161,6 +164,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E3F72F672FA04B930061D5E4 /* SettingsView.swift in Sources */,
 				A001 /* NotchInteractionApp.swift in Sources */,
 				A002 /* AppDelegate.swift in Sources */,
 				A003 /* NotchState.swift in Sources */,

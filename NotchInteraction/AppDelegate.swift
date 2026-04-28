@@ -12,6 +12,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var localClickMonitor: Any?
     private var cancellables = Set<AnyCancellable>()
 
+    // 메뉴바 아이콘
+    var statusItem: NSStatusItem?
+    var settingsWindow: NSWindow?
+
     let notchWidth: CGFloat     = 190
     let notchHeight: CGFloat    = 37
     let notchHalfWidth: CGFloat = 120
@@ -34,6 +38,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupNotchBarWindow()
         setupNowBarWindow()
         setupSideBarWindow()
+        setupStatusItem()
         startMonitoring()
     }
 
@@ -46,6 +51,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func requestAccessibilityIfNeeded() {
         let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeRetainedValue(): true]
         NSLog("🔐 손쉬운 사용 권한: \(AXIsProcessTrustedWithOptions(options))")
+    }
+
+    func setupStatusItem() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        if let button = statusItem?.button {
+            button.image = NSImage(systemSymbolName: "music.note", accessibilityDescription: "Nowbar")
+            button.image?.isTemplate = true
+            button.action = #selector(toggleSettingsWindow)
+            button.target = self
+        }
+    }
+
+    @objc func toggleSettingsWindow() {
+        if let win = settingsWindow, win.isVisible {
+            win.close()
+            return
+        }
+
+        let win = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 200),
+            styleMask: [.titled, .closable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        win.title = "Nowbar"
+        win.titlebarAppearsTransparent = true
+        win.isMovableByWindowBackground = true
+        win.contentView = NSHostingView(rootView: SettingsView())
+        win.center()
+        win.setFrameAutosaveName("NowbarSettings")
+        win.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        settingsWindow = win
     }
 
     func setupNotchBarWindow() {
