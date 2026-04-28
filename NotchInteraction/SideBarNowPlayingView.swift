@@ -274,8 +274,8 @@ struct SideBarNowPlayingView: View {
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-            // 얕고 작은 그림자
-            .shadow(color: .black.opacity(0.12), radius: 4, x: 0, y: 2)
+            // 앨범 대표색 그림자
+            .shadow(color: accentColor.opacity(0.7), radius: 8, x: 0, y: 4)
         )
         .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
