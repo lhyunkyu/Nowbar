@@ -77,8 +77,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             width: sideBarCollapsedWidth,
             height: notchHeight
         )
-        // 알약 클릭 받으려면 마우스 이벤트 수신 필요
-        let win = makeWindow(rect: rect, ignoresMouse: false)
+        // 시작 시에는 알약이 안 보이므로 클릭이 통과되도록 ignoresMouseEvents = true
+        // 알약이 화면에 떠 있을 때만 isSideBarRendered 구독으로 false로 바뀜
+        let win = makeWindow(rect: rect, ignoresMouse: true)
         win.contentView = NSHostingView(rootView: SideBarNowPlayingView())
         sideBarWindow = win
         win.orderFrontRegardless()
@@ -88,6 +89,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .removeDuplicates()
             .sink { [weak self] expanded in
                 self?.resizeSideBarWindow(expanded: expanded)
+            }
+            .store(in: &cancellables)
+
+        // 알약 표시 여부 변화 → 클릭 통과 토글
+        // (알약 안 보일 땐 알림센터 등 아래 요소가 클릭되어야 함)
+        NotchState.shared.$isSideBarRendered
+            .removeDuplicates()
+            .sink { [weak self] rendered in
+                self?.sideBarWindow?.ignoresMouseEvents = !rendered
             }
             .store(in: &cancellables)
     }

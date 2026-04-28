@@ -31,5 +31,10 @@ class NotchState: ObservableObject {
         }
     }
 
+    /// 사이드바 알약이 실제로 화면에 보이는지 여부.
+    /// AppDelegate가 이 값을 구독해서 sideBarWindow의 ignoresMouseEvents를 토글함
+    /// (false면 클릭이 아래 윈도우/알림센터로 통과)
+    @Published var isSideBarRendered: Bool = false
+
     private init() {}
 }

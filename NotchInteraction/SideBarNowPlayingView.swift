@@ -185,11 +185,15 @@ struct SideBarNowPlayingView: View {
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { appeared = true }
             if nowPlaying.isPlaying { triggerShow() }
+            // 초기 클릭 통과 상태 동기화
+            state.isSideBarRendered = shouldRender
         }
         .onChange(of: nowPlaying.isPlaying) { playing in
             playing ? triggerShow() : triggerHide()
         }
         .onChange(of: shouldRender) { show in
+            // AppDelegate가 ignoresMouseEvents 토글에 사용
+            state.isSideBarRendered = show
             if show { animateIn() } else { animateOut() }
         }
         .onChange(of: nowPlaying.artwork) { _ in refreshAccentColor() }
