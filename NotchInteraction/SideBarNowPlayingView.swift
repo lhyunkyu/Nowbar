@@ -131,8 +131,12 @@ struct SideBarNowPlayingView: View {
     private let expandedPillWidth: CGFloat   = 320
     private let expandedPillHeight: CGFloat  = 96
 
-    /// 알약 top 위치 — 작은 알약은 노치 안에 수직 가운데, 확장은 동일한 top에서 그대로 아래로 커짐
-    private var topPadding: CGFloat { (notchBarHeight - collapsedPillHeight) / 2 }
+    /// 알약 top 위치
+    /// - 콜랩스: 노치 안에 수직 가운데
+    /// - 확장: 알림센터 스타일로 노치보다 한참 아래 (약 50pt)
+    private var topPadding: CGFloat {
+        state.isSideBarExpanded ? 50 : (notchBarHeight - collapsedPillHeight) / 2
+    }
 
     var shouldRender: Bool {
         isShowingBar &&
@@ -252,11 +256,25 @@ struct SideBarNowPlayingView: View {
         )
         .frame(width: expandedPillWidth, height: expandedPillHeight)
         .background(
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
-                .fill(accentColor)
-                .shadow(color: .black.opacity(0.35), radius: 18, x: 0, y: 8)
+            ZStack {
+                // 베이스 — 앨범 대표색
+                accentColor
+                // 옅은 앨범아트 오버레이 (있을 때만) — 알약 전체에 흐릿하게 깔림
+                if let art = nowPlaying.artwork {
+                    Image(nsImage: art)
+                        .resizable()
+                        .scaledToFill()
+                        .opacity(0.32)
+                        .blur(radius: 14)
+                        .allowsHitTesting(false)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+            // 얕고 작은 그림자
+            .shadow(color: .black.opacity(0.12), radius: 4, x: 0, y: 2)
         )
-        .contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
         // 알약 본체 탭은 흡수 (뒤의 Color.clear까지 떨어져 축소되지 않게)
         .onTapGesture { /* no-op */ }
     }
@@ -358,63 +376,109 @@ struct ExpandedNowBarContent: View {
     @ObservedObject var nowPlaying: NowPlayingManager
     var fgColor: Color
 
+    @State private var isDragging: Bool   = false
+    @State private var dragRatio:  Double = 0
+
+    /// 시킹 가능 여부 (Spotify/Music 둘 다 지원, 곡 길이 알면 가능)
+    private var canSeek: Bool {
+        nowPlaying.duration > 0 && nowPlaying.source != .none
+    }
+
     private var progress: Double {
+        if isDragging { return dragRatio }
         guard nowPlaying.duration > 0 else { return 0 }
         return min(1.0, max(0, nowPlaying.position / nowPlaying.duration))
     }
 
+    /// 드래그 중 시간 라벨에 표시할 위치
+    private var displayedPosition: Double {
+        if isDragging { return dragRatio * nowPlaying.duration }
+        return nowPlaying.position
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 2) {
             // 상단: 앨범 아트 + 제목/아티스트
-            HStack(spacing: 11) {
+            HStack(spacing: 10) {
                 if let art = nowPlaying.artwork {
                     Image(nsImage: art)
                         .resizable().aspectRatio(contentMode: .fill)
-                        .frame(width: 40, height: 40)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .shadow(color: .black.opacity(0.25), radius: 4, x: 0, y: 2)
+                        .frame(width: 30, height: 30)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
                 } else {
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: 6)
                         .fill(fgColor.opacity(0.18))
-                        .frame(width: 40, height: 40)
+                        .frame(width: 30, height: 30)
                         .overlay(
                             Image(systemName: "music.note")
                                 .foregroundColor(fgColor.opacity(0.7))
                         )
                 }
 
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: 0) {
                     Text(nowPlaying.title.isEmpty ? "재생 중인 음악 없음" : nowPlaying.title)
-                        .font(.system(size: 12.5, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(fgColor)
                         .lineLimit(1).truncationMode(.tail)
                     Text(nowPlaying.artist.isEmpty ? " " : nowPlaying.artist)
-                        .font(.system(size: 10.5))
+                        .font(.system(size: 10))
                         .foregroundColor(fgColor.opacity(0.65))
                         .lineLimit(1).truncationMode(.tail)
                 }
                 Spacer(minLength: 0)
             }
 
-            // 진행바 + 시간
-            VStack(spacing: 3) {
+            // 진행바 + 시간 (굵은 트랙 + 드래그 핸들)
+            VStack(spacing: 1) {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
-                        Capsule().fill(fgColor.opacity(0.20))
-                        Capsule().fill(fgColor.opacity(0.90))
-                            .frame(width: max(0, geo.size.width * CGFloat(progress)))
+                        // 트랙
+                        Capsule()
+                            .fill(fgColor.opacity(0.22))
+                            .frame(height: 6)
+                            .frame(maxHeight: .infinity)
+                        // 채움
+                        Capsule()
+                            .fill(fgColor.opacity(0.95))
+                            .frame(width: max(0, geo.size.width * CGFloat(progress)), height: 6)
+                            .frame(maxHeight: .infinity, alignment: .leading)
+                        // 드래그 핸들 — 시킹 가능할 때만 표시
+                        if canSeek {
+                            Circle()
+                                .fill(fgColor)
+                                .frame(width: 11, height: 11)
+                                .shadow(color: .black.opacity(0.18), radius: 2, x: 0, y: 1)
+                                .offset(x: max(0, geo.size.width * CGFloat(progress) - 5.5))
+                                .scaleEffect(isDragging ? 1.18 : 1.0)
+                                .animation(.easeOut(duration: 0.12), value: isDragging)
+                        }
                     }
                     .contentShape(Rectangle())
-                    .onTapGesture { location in
-                        guard nowPlaying.duration > 0, geo.size.width > 0 else { return }
-                        let ratio = max(0, min(1, location.x / geo.size.width))
-                        nowPlaying.seek(to: ratio * nowPlaying.duration)
-                    }
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                guard canSeek, geo.size.width > 0 else { return }
+                                isDragging = true
+                                dragRatio  = max(0, min(1, value.location.x / geo.size.width))
+                            }
+                            .onEnded { value in
+                                guard canSeek, geo.size.width > 0 else {
+                                    isDragging = false; return
+                                }
+                                let r = max(0, min(1, value.location.x / geo.size.width))
+                                dragRatio = r
+                                nowPlaying.seek(to: r * nowPlaying.duration)
+                                // 시킹 후 폴링 결과가 도착할 때까지 잠깐 드래그 상태 유지
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                                    isDragging = false
+                                }
+                            }
+                    )
                 }
-                .frame(height: 3)
+                .frame(height: 12)  // 빡빡하게 — 6pt 트랙 + 11pt 핸들에 맞춤
 
                 HStack {
-                    Text(formatTime(nowPlaying.position))
+                    Text(formatTime(displayedPosition))
                         .font(.system(size: 9, weight: .medium, design: .rounded))
                         .foregroundColor(fgColor.opacity(0.55))
                         .monospacedDigit()
@@ -429,29 +493,29 @@ struct ExpandedNowBarContent: View {
             // 컨트롤 버튼
             HStack(spacing: 0) {
                 Spacer()
-                ControlButton(systemName: "backward.fill", size: 14) {
+                ControlButton(systemName: "backward.fill", size: 13) {
                     nowPlaying.previousTrack()
                 }
-                .padding(.horizontal, 18)
+                .padding(.horizontal, 12)
 
                 ControlButton(
                     systemName: nowPlaying.isPlaying ? "pause.fill" : "play.fill",
-                    size: 18
+                    size: 16
                 ) {
                     nowPlaying.playPause()
                 }
-                .padding(.horizontal, 6)
+                .padding(.horizontal, 4)
 
-                ControlButton(systemName: "forward.fill", size: 14) {
+                ControlButton(systemName: "forward.fill", size: 13) {
                     nowPlaying.nextTrack()
                 }
-                .padding(.horizontal, 18)
+                .padding(.horizontal, 12)
                 Spacer()
             }
             .foregroundColor(fgColor)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
     }
 
     private func formatTime(_ seconds: Double) -> String {
@@ -472,7 +536,7 @@ private struct ControlButton: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: size, weight: .semibold))
-                .frame(width: size + 12, height: size + 12)
+                .frame(width: size + 4, height: size + 4)
                 .contentShape(Rectangle())
                 .opacity(hover ? 0.65 : 1.0)
                 .scaleEffect(hover ? 1.08 : 1.0)
