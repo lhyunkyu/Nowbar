@@ -272,8 +272,8 @@ struct SideBarNowPlayingView: View {
                     Image(nsImage: art)
                         .resizable()
                         .scaledToFill()
-                        .opacity(0.32)
-                        .blur(radius: 14)
+                        .opacity(0.34)
+                        .blur(radius: 10)
                         .allowsHitTesting(false)
                 }
             }
@@ -406,7 +406,7 @@ struct ExpandedNowBarContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            // 상단: 앨범 아트 + 제목/아티스트
+            // 상단: 앨범 아트 + 제목/아티스트 (탭 → 해당 앱 열기)
             HStack(spacing: 10) {
                 if let art = nowPlaying.artwork {
                     Image(nsImage: art)
@@ -435,6 +435,11 @@ struct ExpandedNowBarContent: View {
                 }
                 Spacer(minLength: 0)
             }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                openMusicApp(source: nowPlaying.source)
+            }
+
 
             // 진행바 + 시간 (굵은 트랙 + 드래그 핸들)
             VStack(spacing: 1) {
@@ -530,6 +535,17 @@ struct ExpandedNowBarContent: View {
         guard seconds.isFinite, seconds > 0 else { return "0:00" }
         let total = Int(seconds)
         return String(format: "%d:%02d", total / 60, total % 60)
+    }
+
+    private func openMusicApp(source: MusicSource) {
+        switch source {
+        case .spotify:
+            NSWorkspace.shared.open(URL(string: "spotify:")!)
+        case .music:
+            NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Music.app"))
+        case .none:
+            break
+        }
     }
 }
 
