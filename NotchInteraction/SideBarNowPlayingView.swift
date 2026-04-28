@@ -119,6 +119,9 @@ struct SideBarNowPlayingView: View {
     @State private var fgColor:       Color = .white   // 배경 밝기에 따라 검정/흰색
     @State private var hideWorkItem:  DispatchWorkItem? = nil
 
+    // 확장 뷰 닫힐 때마다 증가 → MusicWaveView 강제 재생성용
+    @State private var waveResetID: Int = 0
+
     // 컨테이너 등장/사라짐 애니메이션
     @State private var barOffsetX:  CGFloat = -10
     @State private var barScaleX:   CGFloat = 0.05
@@ -205,6 +208,7 @@ struct SideBarNowPlayingView: View {
             } else {
                 HapticManager.shared.playNowBarDisappear()
                 nowPlaying.stopPositionPolling()
+                waveResetID += 1  // 매번 새 id → MusicWaveView 재생성
             }
         }
     }
@@ -237,9 +241,10 @@ struct SideBarNowPlayingView: View {
                 color:    fgColor
             )
 
-            // 뮤직 웨이브
+            // 뮤직 웨이브 — 확장 뷰 닫힐 때마다 waveResetID 증가로 강제 재생성
             MusicWaveView(animating: waveAnimating, color: fgColor)
                 .frame(width: 14, height: 12)
+                .id(waveResetID)
         }
         .padding(.horizontal, 12)
         .frame(height: collapsedPillHeight)
@@ -558,19 +563,29 @@ struct MusicWaveView: View {
     let heights: [CGFloat] = [0.45, 0.9, 0.6, 1.0, 0.7]
     let delays:  [Double]  = [0.0, 0.12, 0.22, 0.08, 0.18]
 
+    // 뷰가 재생성돼도 onAppear에서 false→true 전환으로 애니메이션 재트리거
+    @State private var active: Bool = false
+
     var body: some View {
         HStack(spacing: 1.5) {
             ForEach(0..<5, id: \.self) { i in
                 RoundedRectangle(cornerRadius: 1)
                     .fill(color.opacity(0.85))
-                    .frame(width: 2, height: animating ? 12 * heights[i] : 2)
+                    .frame(width: 2, height: active ? 12 * heights[i] : 2)
                     .animation(
-                        animating
+                        active
                             ? .easeInOut(duration: 0.42).repeatForever(autoreverses: true).delay(delays[i])
                             : .easeInOut(duration: 0.25),
-                        value: animating
+                        value: active
                     )
             }
         }
+        .onAppear {
+            // 약간의 딜레이 후 설정해야 애니메이션이 제대로 트리거됨
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                active = animating
+            }
+        }
+        .onChange(of: animating) { active = $0 }
     }
 }
