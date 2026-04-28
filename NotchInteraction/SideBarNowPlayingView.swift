@@ -453,7 +453,7 @@ struct ExpandedNowBarContent: View {
                                 .frame(width: 11, height: 11)
                                 .shadow(color: .black.opacity(0.18), radius: 2, x: 0, y: 1)
                                 .offset(x: max(0, geo.size.width * CGFloat(progress) - 5.5))
-                                .scaleEffect(isDragging ? 1.18 : 1.0)
+                                .opacity(isDragging ? 0 : 1)
                                 .animation(.easeOut(duration: 0.12), value: isDragging)
                         }
                     }
