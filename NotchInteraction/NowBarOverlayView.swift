@@ -64,7 +64,7 @@ struct NowBarOverlayView: View {
             .animation(.spring(response: 0.35, dampingFraction: 0.55), value: cornerRadius)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .padding(.top, 4)  // AlertPopupView와 동일
+        .padding(.top, 24)  // 4pt 원래 위치 + 20pt 그림자 영역 보정
         .onChange(of: shouldShow) { show in
             if show && !wasShowing {
                 HapticManager.shared.playNowBarAppear()

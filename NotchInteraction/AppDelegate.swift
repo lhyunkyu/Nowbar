@@ -118,7 +118,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func setupNowBarWindow() {
         guard let screen = NSScreen.screens.first else { return }
         let sf = screen.frame
-        let rect = NSRect(x: (sf.width - nowBarWidth) / 2, y: sf.height - notchHeight - nowBarHeight, width: nowBarWidth, height: nowBarHeight)
+        let shadowPad: CGFloat = 20
+        let rect = NSRect(x: (sf.width - nowBarWidth) / 2, y: sf.height - notchHeight - nowBarHeight, width: nowBarWidth, height: nowBarHeight + shadowPad)
         let win = makeWindow(rect: rect, ignoresMouse: true)
         win.contentView = NSHostingView(rootView: NowBarOverlayView())
         nowBarWindow = win
