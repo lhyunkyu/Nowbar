@@ -141,6 +141,7 @@ struct ExpandedNowBarContent: View {
         switch source {
         case .spotify: NSWorkspace.shared.open(URL(string: "spotify:")!)
         case .music:   NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Music.app"))
+        case .browser: NSWorkspace.shared.frontmostApplication?.activate(options: .activateIgnoringOtherApps)
         case .none:    break
         }
     }
