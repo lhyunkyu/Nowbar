@@ -59,6 +59,54 @@ class NowPlayingManager: ObservableObject {
     private var positionTimer: Timer?
     private var browserTimer: Timer?
     private var lastTrackID: String = ""
+    /// 브라우저 position 보간용 — JS 폴 직후 기록, 0.5s 타이머에서 경과 시간만큼 더함
+    private var lastBrowserPositionDate: Date? = nil
+
+    // MARK: - 미디어 큐 (최근 재생 기록 → 소스 전환 시 이전 소스 복원)
+    private struct MediaQueueItem {
+        var source:      MusicSource
+        var title:       String
+        var artist:      String
+        var artwork:     NSImage?
+        var lastActiveAt: Date
+    }
+    private var mediaQueue: [MediaQueueItem] = []   // 최신순, 최대 3개
+
+    private func enqueue(source: MusicSource, title: String, artist: String, artwork: NSImage?) {
+        guard !title.isEmpty else { return }
+        mediaQueue.removeAll { $0.source == source }
+        mediaQueue.insert(MediaQueueItem(source: source, title: title, artist: artist,
+                                         artwork: artwork, lastActiveAt: Date()), at: 0)
+        if mediaQueue.count > 3 { mediaQueue.removeLast() }
+    }
+
+    /// 현재 소스가 멈춘 뒤 가장 최근 다른 소스로 복원 시도
+    private func tryRestoreFromQueue(stoppedSource: MusicSource) {
+        guard let next = mediaQueue.first(where: {
+            $0.source != stoppedSource &&
+            Date().timeIntervalSince($0.lastActiveAt) < 1800   // 30분 이내
+        }) else { return }
+
+        if next.source == .browser {
+            // native lock 이 풀리는 시점 직후에 체크
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
+                guard let self, self.source == .none else { return }
+                self.checkBrowserMedia()
+            }
+        }
+        // Spotify / Music은 DistributedNotification 이 스스로 처리
+    }
+    /// Spotify / Apple Music 이 현재 활성 재생 중 → 브라우저가 덮어쓰지 못하게 막음
+    private var nativeAppIsActive: Bool = false
+    /// Spotify 트랙 전환 시 Stopped→Playing 알림 사이에 브라우저가 끼어드는 것을 방지
+    private var nativeLockUntil: Date? = nil
+    private var isNativeLocked: Bool {
+        guard let t = nativeLockUntil else { return false }
+        return Date() < t
+    }
+    private func lockNative(for seconds: Double = 6) {
+        nativeLockUntil = Date().addingTimeInterval(seconds)
+    }
 
     private init() {
         loadMediaRemote()
@@ -78,6 +126,7 @@ class NowPlayingManager: ObservableObject {
 
         if let ptr = dlsym(handle, "MRMediaRemoteRegisterForNowPlayingNotifications") {
             registerForPlaying = unsafeBitCast(ptr, to: MRMediaRemoteRegisterFunc.self)
+            registerForPlaying?(DispatchQueue.main)   // ← 즉시 등록 (이걸 해야 getNowPlayingInfo가 Chrome 포함 모든 앱 데이터를 줌)
         }
         if let ptr = dlsym(handle, "MRMediaRemoteGetNowPlayingApplicationDisplayName") {
             getAppDisplayName = unsafeBitCast(ptr, to: MRMediaRemoteGetAppNameFunc.self)
@@ -94,64 +143,99 @@ class NowPlayingManager: ObservableObject {
 
     // 지원 브라우저 (번들ID, 앱이름, AppleScript — 전체 탭 순회해서 재생 중인 탭 탐색)
     private var supportedBrowsers: [(bundleID: String, name: String, script: String)] {
-        let musicPatterns = musicURLPatterns.joined(separator: "\", \"")
-        // 1순위: ▶ 로 시작하는 탭 (YouTube 재생 중 표시)
-        // 2순위: 음악 사이트 URL을 가진 탭
-        let chromeScript = """
-            tell application "Google Chrome"
+        // Chrome 계열: JS 인젝션으로 video.paused / currentTime / duration 직접 읽기
+        func chromeScript(appName: String) -> String { """
+            tell application "\(appName)"
+                set playingTab to missing value
                 repeat with w in windows
                     repeat with t in tabs of w
                         if title of t starts with "▶" then
-                            return (title of t) & "|||" & (URL of t)
+                            set playingTab to t
+                            exit repeat
                         end if
                     end repeat
+                    if playingTab is not missing value then exit repeat
                 end repeat
-                repeat with w in windows
-                    repeat with t in tabs of w
-                        set u to URL of t
-                        repeat with p in {"\(musicPatterns)"}
-                            if u contains p then
-                                return (title of t) & "|||" & u
+                if playingTab is missing value then
+                    repeat with w in windows
+                        repeat with t in tabs of w
+                            set u to URL of t
+                            if u contains "youtube.com/watch" or u contains "music.youtube.com" or u contains "open.spotify.com/track" or u contains "soundcloud.com" then
+                                set playingTab to t
+                                exit repeat
                             end if
                         end repeat
+                        if playingTab is not missing value then exit repeat
                     end repeat
-                end repeat
-                return ""
+                end if
+                if playingTab is missing value then return ""
+                set tabTitle to title of playingTab
+                set tabURL to URL of playingTab
+                try
+                    set vState to execute playingTab javascript "var p=document.querySelector('.html5-video-player'),v=document.querySelector('video');p?(p.classList.contains('paused-mode')||p.classList.contains('ended-mode')?'0':'1')+'|'+(v?v.currentTime:0)+'|'+(v?v.duration:0):v?(v.paused?'0':'1')+'|'+v.currentTime+'|'+v.duration:''"
+                on error
+                    set vState to ""
+                end try
+                return tabTitle & "|||" & tabURL & "|||" & vState
             end tell
             """
+        }
+        // Safari: JS 실행 권한 제한으로 title+URL만 (position은 MediaRemote 보정)
         let safariScript = """
             tell application "Safari"
+                set playingTab to missing value
                 repeat with w in windows
                     repeat with t in tabs of w
                         if name of t starts with "▶" then
-                            return (name of t) & "|||" & (URL of t)
+                            set playingTab to t
+                            exit repeat
                         end if
                     end repeat
+                    if playingTab is not missing value then exit repeat
                 end repeat
-                repeat with w in windows
-                    repeat with t in tabs of w
-                        set u to URL of t
-                        repeat with p in {"\(musicPatterns)"}
-                            if u contains p then
-                                return (name of t) & "|||" & u
+                if playingTab is missing value then
+                    repeat with w in windows
+                        repeat with t in tabs of w
+                            set u to URL of t
+                            if u contains "youtube.com/watch" or u contains "music.youtube.com" or u contains "open.spotify.com/track" or u contains "soundcloud.com" then
+                                set playingTab to t
+                                exit repeat
                             end if
                         end repeat
+                        if playingTab is not missing value then exit repeat
                     end repeat
-                end repeat
-                return ""
+                end if
+                if playingTab is missing value then return ""
+                return (name of playingTab) & "|||" & (URL of playingTab)
             end tell
             """
         return [
-            ("com.google.Chrome",            "Google Chrome", chromeScript),
-            ("com.apple.Safari",             "Safari",        safariScript),
-            ("com.brave.Browser",            "Brave Browser", chromeScript.replacingOccurrences(of: "Google Chrome", with: "Brave Browser")),
-            ("com.microsoft.edgemac",        "Microsoft Edge", chromeScript.replacingOccurrences(of: "Google Chrome", with: "Microsoft Edge")),
-            ("company.thebrowser.Browser",   "Arc",           chromeScript.replacingOccurrences(of: "Google Chrome", with: "Arc")),
+            ("com.google.Chrome",          "Google Chrome",  chromeScript(appName: "Google Chrome")),
+            ("com.apple.Safari",           "Safari",         safariScript),
+            ("com.brave.Browser",          "Brave Browser",  chromeScript(appName: "Brave Browser")),
+            ("com.microsoft.edgemac",      "Microsoft Edge", chromeScript(appName: "Microsoft Edge")),
+            ("company.thebrowser.Browser", "Arc",            chromeScript(appName: "Arc")),
         ]
     }
 
-    // MARK: - 브라우저 미디어 감지 (앱 전환 즉시 + 5초 백업 폴링)
+    // MARK: - 브라우저 미디어 감지 (앱 전환 즉시 + 2초 백업 폴링)
     private func registerMediaRemoteNotifications() {
+        // MediaRemote 재생 상태 변경 알림 → 브라우저 source일 때 즉시 갱신
+        // (registerForPlaying 호출 후 NotificationCenter.default 로 전달됨)
+        let mrNames = [
+            "kMRMediaRemoteNowPlayingInfoDidChangeNotification",
+            "kMRMediaRemoteNowPlayingApplicationIsPlayingDidChangeNotification",
+        ]
+        for name in mrNames {
+            NotificationCenter.default.addObserver(
+                forName: NSNotification.Name(name),
+                object: nil, queue: .main
+            ) { [weak self] _ in
+                guard let self, self.source == .browser else { return }
+                self.fetchBrowserPositionMR()
+            }
+        }
+
         // 브라우저로 전환 시 즉시 체크
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
@@ -164,14 +248,20 @@ class NowPlayingManager: ObservableObject {
             self?.checkBrowserMedia()
         }
 
-        // 5초 백업 폴링 (브라우저 실행 중일 때만 실질 동작)
-        browserTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+        // 2초 백업 폴링 (브라우저 실행 중일 때만 실질 동작)
+        browserTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             self?.checkBrowserMedia()
         }
     }
 
     /// AppleScript로 브라우저 탭 정보 읽기
     func checkBrowserMedia() {
+        // Spotify / Music 이 재생 중이거나 최근 알림이 왔으면 브라우저 감지 스킵
+        guard !isNativeLocked else { return }
+        let nativeStillRunning = NSWorkspace.shared.runningApplications.contains(where: {
+            $0.bundleIdentifier == "com.spotify.client" || $0.bundleIdentifier == "com.apple.Music"
+        })
+        guard !(nativeAppIsActive && nativeStillRunning) else { return }
         guard source != .spotify && source != .music else { return }
 
         guard let browser = supportedBrowsers.first(where: { b in
@@ -197,19 +287,27 @@ class NowPlayingManager: ObservableObject {
                 let afterSpace = raw.index(closeParen, offsetBy: 2, limitedBy: raw.endIndex) ?? raw.endIndex
                 raw = String(raw[afterSpace...])
             }
-            let parts    = raw.components(separatedBy: "|||")
-            let tabTitle = parts.first ?? raw
-            let tabURL   = parts.count > 1 ? parts[1] : ""
-            DispatchQueue.main.async { self?.parseBrowserTitle(tabTitle, url: tabURL) }
+            let parts      = raw.components(separatedBy: "|||")
+            let tabTitle   = parts.first ?? raw
+            let tabURL     = parts.count > 1 ? parts[1] : ""
+            let videoState = parts.count > 2 ? parts[2] : ""
+            DispatchQueue.main.async { self?.parseBrowserTitle(tabTitle, url: tabURL, videoState: videoState) }
         }
     }
 
     /// 탭 제목에서 곡명/아티스트 파싱 (YouTube, YouTube Music, Spotify Web, SoundCloud)
-    private func parseBrowserTitle(_ tabTitle: String, url: String) {
+    /// videoState: JS 인젝션 결과 "isPlaying|currentTime|duration" (초기 position 힌트용)
+    private func parseBrowserTitle(_ tabTitle: String, url: String, videoState: String = "") {
+        // JS 파싱 — position 초기값 힌트 (isPlaying은 MediaRemote가 처리)
+        let vsParts    = videoState.components(separatedBy: "|")
+        let jsTime:    Double? = vsParts.count >= 3 ? Double(vsParts[1]) : nil
+        let jsDur:     Double? = vsParts.count >= 3 ? Double(vsParts[2]) : nil
+
         // YouTube / YouTube Music
         if tabTitle.contains("YouTube") {
-            let isWatchPage = url.contains("youtube.com/watch") || url.contains("music.youtube.com")
-            let playing = tabTitle.first == "▶" || isWatchPage
+            // isPlaying은 MediaRemote가 결정 — 현재 값 유지하며 MR 즉시 호출
+            let playing = tabTitle.first == "▶" ? true : self.isPlaying
+
             var t = tabTitle
                 .replacingOccurrences(of: "▶ ", with: "")
                 .replacingOccurrences(of: " - YouTube Music", with: "")
@@ -218,7 +316,9 @@ class NowPlayingManager: ObservableObject {
                 if source == .browser { resetBrowserState() }; return
             }
             let changed = updateBrowserState(title: t, artist: "YouTube", isPlaying: playing)
+            applyJSVideoState(jsTime: jsTime, jsDur: jsDur, needsMR: true)
             if changed { fetchYouTubeThumbnail(from: url) }
+            enqueue(source: .browser, title: t, artist: "YouTube", artwork: artwork)
             return
         }
 
@@ -228,13 +328,15 @@ class NowPlayingManager: ObservableObject {
             guard cleaned != "Spotify", !cleaned.isEmpty else {
                 if source == .browser { resetBrowserState() }; return
             }
-            let parts  = cleaned.components(separatedBy: " - ")
-            let song   = parts.first ?? cleaned
-            let artist = parts.count > 1 ? parts[1] : "Spotify"
-            let changed = updateBrowserState(title: song, artist: artist, isPlaying: true)
+            let parts   = cleaned.components(separatedBy: " - ")
+            let song    = parts.first ?? cleaned
+            let artist  = parts.count > 1 ? parts[1] : "Spotify"
+            let changed = updateBrowserState(title: song, artist: artist, isPlaying: self.isPlaying)
+            applyJSVideoState(jsTime: jsTime, jsDur: jsDur, needsMR: true)
             if changed, let trackID = extractSpotifyTrackID(from: url) {
                 fetchSpotifyArtwork(trackID: trackID)
             }
+            enqueue(source: .browser, title: song, artist: artist, artwork: artwork)
             return
         }
 
@@ -245,7 +347,9 @@ class NowPlayingManager: ObservableObject {
             let parts  = t.components(separatedBy: " by ")
             let song   = parts.first ?? t
             let artist = parts.count > 1 ? parts[1] : "SoundCloud"
-            _ = updateBrowserState(title: song, artist: artist, isPlaying: true)
+            _ = updateBrowserState(title: song, artist: artist, isPlaying: self.isPlaying)
+            applyJSVideoState(jsTime: jsTime, jsDur: jsDur, needsMR: true)
+            enqueue(source: .browser, title: song, artist: artist, artwork: artwork)
             return
         }
 
@@ -264,6 +368,15 @@ class NowPlayingManager: ObservableObject {
         lastTrackID = trackID
         artwork     = nil
         return true
+    }
+
+    /// JS position/duration 힌트 적용 후 MediaRemote로 정확한 상태 즉시 갱신
+    private func applyJSVideoState(jsTime: Double?, jsDur: Double?, needsMR: Bool) {
+        // JS 값은 초기 힌트용 — 이후 MediaRemote가 덮어씀
+        if let ct = jsTime, ct.isFinite, ct >= 0 { position = ct }
+        if let dur = jsDur, dur.isFinite, dur > 0 { duration = dur }
+        // 항상 MR로 정확한 isPlaying + position 즉시 확인
+        fetchBrowserPositionMR()
     }
 
     // MARK: - YouTube 썸네일 fetch
@@ -301,12 +414,15 @@ class NowPlayingManager: ObservableObject {
     }
 
     private func resetBrowserState() {
-        isPlaying   = false
-        title       = ""
-        artist      = ""
-        artwork     = nil
-        lastTrackID = ""
-        source      = .none
+        isPlaying               = false
+        title                   = ""
+        artist                  = ""
+        artwork                 = nil
+        lastTrackID             = ""
+        position                = 0
+        duration                = 0
+        lastBrowserPositionDate = nil
+        source                  = .none
     }
 
     private func isAnyBrowserRunning() -> Bool {
@@ -338,7 +454,9 @@ class NowPlayingManager: ObservableObject {
         let playing = state == "Playing" && !name.isEmpty
         let stopped = state == "Stopped" || name.isEmpty
 
-        // isPlaying / title 업데이트
+        // 브라우저에서 Spotify로 전환 시 브라우저 상태 클리어
+        if !name.isEmpty && source == .browser { lastTrackID = "" }
+
         if self.title     != name   { self.title   = name }
         if self.artist    != art    { self.artist  = art }
         if self.isPlaying != playing { self.isPlaying = playing }
@@ -349,18 +467,23 @@ class NowPlayingManager: ObservableObject {
             self.duration = durMs / 1000.0
         }
 
+        nativeAppIsActive = playing
+
         if stopped {
-            artwork     = nil
-            lastTrackID = ""
-            source      = .none   // 브라우저가 이어받을 수 있도록 소스 초기화
-        } else if trackID != lastTrackID {
-            // 곡이 바뀌었을 때만 아트워크 새로 가져오기
-            lastTrackID = trackID
-            artwork     = nil
-            position    = 0
-            fetchSpotifyArtwork(trackID: trackID)
+            lockNative(for: 1.5)
+            nativeAppIsActive = false
+            source            = .none
+            tryRestoreFromQueue(stoppedSource: .spotify)
+        } else {
+            lockNative(for: 5)
+            if trackID != lastTrackID {
+                lastTrackID = trackID
+                artwork     = nil
+                position    = 0
+                fetchSpotifyArtwork(trackID: trackID)
+            }
+            enqueue(source: .spotify, title: name, artist: art, artwork: artwork)
         }
-        // 일시정지(Paused)는 아트워크 유지
     }
 
     // MARK: - Apple Music 핸들러
@@ -375,6 +498,9 @@ class NowPlayingManager: ObservableObject {
         let playing = state == "Playing" && !name.isEmpty
         let stopped = state == "Stopped" || name.isEmpty
 
+        // 브라우저에서 Music으로 전환 시 브라우저 상태 클리어
+        if !name.isEmpty && source == .browser { lastTrackID = "" }
+
         if self.title     != name   { self.title   = name }
         if self.artist    != art    { self.artist  = art }
         if self.isPlaying != playing { self.isPlaying = playing }
@@ -388,18 +514,23 @@ class NowPlayingManager: ObservableObject {
             self.duration = dur
         }
 
+        nativeAppIsActive = playing
+
         if stopped {
-            artwork     = nil
-            lastTrackID = ""
-            source      = .none   // 브라우저가 이어받을 수 있도록 소스 초기화
-        } else if trackID != lastTrackID {
-            // 곡이 바뀌었을 때만 아트워크 새로 가져오기
-            lastTrackID = trackID
-            artwork     = nil
-            position    = 0
-            fetchArtworkAppleScript(app: "Music")
+            lockNative(for: 1.5)
+            nativeAppIsActive = false
+            source            = .none
+            tryRestoreFromQueue(stoppedSource: .music)
+        } else {
+            lockNative(for: 5)
+            if trackID != lastTrackID {
+                lastTrackID = trackID
+                artwork     = nil
+                position    = 0
+                fetchArtworkAppleScript(app: "Music")
+            }
+            enqueue(source: .music, title: name, artist: art, artwork: artwork)
         }
-        // 일시정지(Paused)는 아트워크 유지
     }
 
     // MARK: - AppleScript 아트워크 (Apple Music 전용)
@@ -560,6 +691,8 @@ class NowPlayingManager: ObservableObject {
     /// 0.5초 간격으로 player position을 갱신. 확장 시 호출.
     func startPositionPolling() {
         stopPositionPolling()
+        // 브라우저는 확장 직후 JS 폴로 정확한 position 확보
+        if source == .browser { checkBrowserMedia() }
         fetchPositionOnce()
         positionTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             self?.fetchPositionOnce()
@@ -571,8 +704,37 @@ class NowPlayingManager: ObservableObject {
         positionTimer = nil
     }
 
+    /// MediaRemote를 통해 브라우저 재생 위치/길이 갱신
+    private func fetchBrowserPositionMR() {
+        guard let fn = getNowPlayingInfo else { return }
+        fn(DispatchQueue.main) { [weak self] info in
+            guard let self, self.source == .browser else { return }
+            // 재생 속도 (0 = 일시정지, 1 = 재생)
+            let rate = info["kMRMediaRemoteNowPlayingInfoPlaybackRate"] as? Double ?? 0
+            self.isPlaying = rate > 0
+
+            if let elapsed = info["kMRMediaRemoteNowPlayingInfoElapsedTime"] as? Double {
+                // 타임스탬프 기준으로 실제 위치 보정
+                var pos = elapsed
+                if rate > 0,
+                   let ts = info["kMRMediaRemoteNowPlayingInfoTimestamp"] as? Date {
+                    pos += Date().timeIntervalSince(ts) * rate
+                }
+                self.position = max(0, pos)
+            }
+            if let dur = info["kMRMediaRemoteNowPlayingInfoDuration"] as? Double, dur > 0 {
+                self.duration = dur
+            }
+        }
+    }
+
     private func fetchPositionOnce() {
-        guard source != .none && source != .browser else { return }
+        if source == .browser {
+            // Chrome도 MediaRemote에 등록되어 있음 → 네이티브 앱과 동일하게 MR 사용
+            fetchBrowserPositionMR()
+            return
+        }
+        guard source != .none else { return }
         let appName  = source == .spotify ? "Spotify" : "Music"
         let bundleID = source == .spotify ? "com.spotify.client" : "com.apple.Music"
         guard NSWorkspace.shared.runningApplications

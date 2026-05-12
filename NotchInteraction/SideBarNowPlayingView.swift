@@ -69,7 +69,16 @@ struct SideBarNowPlayingView: View {
             if nowPlaying.isPlaying { triggerShow() }
             state.isSideBarRendered = shouldRender
         }
-        .onChange(of: nowPlaying.isPlaying)         { $0 ? triggerShow() : triggerHide() }
+        .onChange(of: nowPlaying.isPlaying) { playing in
+            playing ? triggerShow() : triggerHide()
+        }
+        .onChange(of: nowPlaying.source) { src in
+            // 브라우저에서 실제 재생 중일 때만 표시 (일시정지된 탭은 무시)
+            if src == .browser && nowPlaying.isPlaying && !nowPlaying.title.isEmpty { triggerShow() }
+        }
+        .onChange(of: nowPlaying.title) { title in
+            if !title.isEmpty && nowPlaying.source == .browser && nowPlaying.isPlaying && !isShowingBar { triggerShow() }
+        }
         .onChange(of: shouldRender)                 { show in
             state.isSideBarRendered = show
             show ? animateIn() : animateOut()
