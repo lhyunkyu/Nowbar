@@ -57,6 +57,7 @@ class NowPlayingManager: ObservableObject {
 
     private var pollingTimer: Timer?
     private var positionTimer: Timer?
+    private var browserTimer: Timer?
     private var lastTrackID: String = ""
 
     private init() {
@@ -69,16 +70,11 @@ class NowPlayingManager: ObservableObject {
     // MARK: - MediaRemote 로드
     private func loadMediaRemote() {
         let path = "/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote"
-        guard let handle = dlopen(path, RTLD_NOW) else {
-            NSLog("❌ MediaRemote dlopen 실패")
-            return
-        }
-        NSLog("✅ MediaRemote 로드 성공")
+        guard let handle = dlopen(path, RTLD_NOW) else { return }
 
         if let ptr = dlsym(handle, "MRMediaRemoteGetNowPlayingInfo") {
             getNowPlayingInfo = unsafeBitCast(ptr, to: MRMediaRemoteGetNowPlayingInfoFunc.self)
-            NSLog("✅ MRMediaRemoteGetNowPlayingInfo 로드됨")
-        } else { NSLog("❌ MRMediaRemoteGetNowPlayingInfo 없음") }
+        }
 
         if let ptr = dlsym(handle, "MRMediaRemoteRegisterForNowPlayingNotifications") {
             registerForPlaying = unsafeBitCast(ptr, to: MRMediaRemoteRegisterFunc.self)
@@ -91,65 +87,90 @@ class NowPlayingManager: ObservableObject {
         }
     }
 
-    // 지원 브라우저 (번들ID, 앱이름, AppleScript — 제목|||URL 반환)
-    private let supportedBrowsers: [(bundleID: String, name: String, script: String)] = [
-        ("com.google.Chrome", "Google Chrome", """
-         tell application "Google Chrome"
-             set t to title of active tab of front window
-             set u to URL of active tab of front window
-             return t & "|||" & u
-         end tell
-         """),
-        ("com.apple.Safari", "Safari", """
-         tell application "Safari"
-             set t to name of current tab of front window
-             set u to URL of current tab of front window
-             return t & "|||" & u
-         end tell
-         """),
-        ("company.thebrowser.Browser", "Arc", """
-         tell application "Arc"
-             set t to title of active tab of front window
-             set u to URL of active tab of front window
-             return t & "|||" & u
-         end tell
-         """),
-        ("com.brave.Browser", "Brave Browser", """
-         tell application "Brave Browser"
-             set t to title of active tab of front window
-             set u to URL of active tab of front window
-             return t & "|||" & u
-         end tell
-         """),
-        ("com.microsoft.edgemac", "Microsoft Edge", """
-         tell application "Microsoft Edge"
-             set t to title of active tab of front window
-             set u to URL of active tab of front window
-             return t & "|||" & u
-         end tell
-         """),
-    ]
+    // 음악 사이트 URL 패턴
+    private let musicURLPatterns = ["youtube.com/watch", "youtube.com/shorts",
+                                    "music.youtube.com", "open.spotify.com/track",
+                                    "soundcloud.com"]
 
-    // MARK: - Darwin 알림으로 브라우저 미디어 변경 감지 (폴링 없음)
-    private func registerMediaRemoteNotifications() {
-        registerForPlaying?(DispatchQueue.main)
-
-        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
-        CFNotificationCenterAddObserver(
-            CFNotificationCenterGetDarwinNotifyCenter(),
-            selfPtr,
-            { _, observer, _, _, _ in
-                guard let observer else { return }
-                let manager = Unmanaged<NowPlayingManager>.fromOpaque(observer).takeUnretainedValue()
-                DispatchQueue.main.async { manager.checkBrowserMedia() }
-            },
-            "kMRMediaRemoteNowPlayingInfoDidChangeNotification" as CFString,
-            nil,
-            .deliverImmediately
-        )
+    // 지원 브라우저 (번들ID, 앱이름, AppleScript — 전체 탭 순회해서 재생 중인 탭 탐색)
+    private var supportedBrowsers: [(bundleID: String, name: String, script: String)] {
+        let musicPatterns = musicURLPatterns.joined(separator: "\", \"")
+        // 1순위: ▶ 로 시작하는 탭 (YouTube 재생 중 표시)
+        // 2순위: 음악 사이트 URL을 가진 탭
+        let chromeScript = """
+            tell application "Google Chrome"
+                repeat with w in windows
+                    repeat with t in tabs of w
+                        if title of t starts with "▶" then
+                            return (title of t) & "|||" & (URL of t)
+                        end if
+                    end repeat
+                end repeat
+                repeat with w in windows
+                    repeat with t in tabs of w
+                        set u to URL of t
+                        repeat with p in {"\(musicPatterns)"}
+                            if u contains p then
+                                return (title of t) & "|||" & u
+                            end if
+                        end repeat
+                    end repeat
+                end repeat
+                return ""
+            end tell
+            """
+        let safariScript = """
+            tell application "Safari"
+                repeat with w in windows
+                    repeat with t in tabs of w
+                        if name of t starts with "▶" then
+                            return (name of t) & "|||" & (URL of t)
+                        end if
+                    end repeat
+                end repeat
+                repeat with w in windows
+                    repeat with t in tabs of w
+                        set u to URL of t
+                        repeat with p in {"\(musicPatterns)"}
+                            if u contains p then
+                                return (name of t) & "|||" & u
+                            end if
+                        end repeat
+                    end repeat
+                end repeat
+                return ""
+            end tell
+            """
+        return [
+            ("com.google.Chrome",            "Google Chrome", chromeScript),
+            ("com.apple.Safari",             "Safari",        safariScript),
+            ("com.brave.Browser",            "Brave Browser", chromeScript.replacingOccurrences(of: "Google Chrome", with: "Brave Browser")),
+            ("com.microsoft.edgemac",        "Microsoft Edge", chromeScript.replacingOccurrences(of: "Google Chrome", with: "Microsoft Edge")),
+            ("company.thebrowser.Browser",   "Arc",           chromeScript.replacingOccurrences(of: "Google Chrome", with: "Arc")),
+        ]
     }
 
-    /// 브라우저 미디어 변경 시 호출 — AppleScript로 탭 정보 읽기
+    // MARK: - 브라우저 미디어 감지 (앱 전환 즉시 + 5초 백업 폴링)
+    private func registerMediaRemoteNotifications() {
+        // 브라우저로 전환 시 즉시 체크
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil, queue: .main
+        ) { [weak self] note in
+            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  let bundleID = app.bundleIdentifier,
+                  self?.supportedBrowsers.contains(where: { $0.bundleID == bundleID }) == true
+            else { return }
+            self?.checkBrowserMedia()
+        }
+
+        // 5초 백업 폴링 (브라우저 실행 중일 때만 실질 동작)
+        browserTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            self?.checkBrowserMedia()
+        }
+    }
+
+    /// AppleScript로 브라우저 탭 정보 읽기
     func checkBrowserMedia() {
         guard source != .spotify && source != .music else { return }
 
@@ -164,8 +185,18 @@ class NowPlayingManager: ObservableObject {
             guard let script = NSAppleScript(source: browser.script) else { return }
             var err: NSDictionary?
             let result = script.executeAndReturnError(&err)
-            if let err = err { NSLog("❌ Browser AppleScript 에러: \(err)"); return }
-            guard let raw = result.stringValue else { return }
+            if err != nil { return }
+            guard var raw = result.stringValue, !raw.isEmpty else {
+                DispatchQueue.main.async { if self?.source == .browser { self?.resetBrowserState() } }
+                return
+            }
+            // NSAppleScript가 긴 문자열에 "(160) " 같은 길이 접두사를 붙이는 경우 제거
+            if raw.first == "(",
+               let closeParen = raw.firstIndex(of: ")"),
+               raw.distance(from: raw.startIndex, to: closeParen) < 10 {
+                let afterSpace = raw.index(closeParen, offsetBy: 2, limitedBy: raw.endIndex) ?? raw.endIndex
+                raw = String(raw[afterSpace...])
+            }
             let parts    = raw.components(separatedBy: "|||")
             let tabTitle = parts.first ?? raw
             let tabURL   = parts.count > 1 ? parts[1] : ""
@@ -177,7 +208,8 @@ class NowPlayingManager: ObservableObject {
     private func parseBrowserTitle(_ tabTitle: String, url: String) {
         // YouTube / YouTube Music
         if tabTitle.contains("YouTube") {
-            let playing = tabTitle.hasPrefix("▶")
+            let isWatchPage = url.contains("youtube.com/watch") || url.contains("music.youtube.com")
+            let playing = tabTitle.first == "▶" || isWatchPage
             var t = tabTitle
                 .replacingOccurrences(of: "▶ ", with: "")
                 .replacingOccurrences(of: " - YouTube Music", with: "")
@@ -302,7 +334,6 @@ class NowPlayingManager: ObservableObject {
         let art     = info["Artist"]       as? String ?? ""
         let trackID = info["Track ID"]     as? String ?? name
 
-        NSLog("🎵 [Spotify] \(state) – \(name)")
 
         let playing = state == "Playing" && !name.isEmpty
         let stopped = state == "Stopped" || name.isEmpty
@@ -340,7 +371,6 @@ class NowPlayingManager: ObservableObject {
         let art     = info["Artist"]       as? String ?? ""
         let trackID = "\(name)-\(art)"
 
-        NSLog("🎵 [Music] \(state) – \(name)")
 
         let playing = state == "Playing" && !name.isEmpty
         let stopped = state == "Stopped" || name.isEmpty
@@ -377,10 +407,7 @@ class NowPlayingManager: ObservableObject {
         // 해당 앱이 실행 중일 때만 실행 (앱 자동 실행 방지)
         let bundleID = app == "Music" ? "com.apple.Music" : "com.apple.iTunes"
         guard NSWorkspace.shared.runningApplications
-                .contains(where: { $0.bundleIdentifier == bundleID }) else {
-            NSLog("⚠️ \(app) 앱이 실행 중이 아님 — AppleScript 스킵")
-            return
-        }
+                .contains(where: { $0.bundleIdentifier == bundleID }) else { return }
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let src = """
@@ -398,10 +425,7 @@ class NowPlayingManager: ObservableObject {
 
             let rawData = result.data
             if !rawData.isEmpty, let img = NSImage(data: rawData) {
-                DispatchQueue.main.async {
-                    NSLog("🖼️ AppleScript 아트워크 성공")
-                    self?.artwork = img
-                }
+                DispatchQueue.main.async { self?.artwork = img }
             }
         }
     }
@@ -416,16 +440,10 @@ class NowPlayingManager: ObservableObject {
             guard let data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let thumbStr = json["thumbnail_url"] as? String,
-                  let thumbURL = URL(string: thumbStr) else {
-                NSLog("❌ Spotify oEmbed 파싱 실패")
-                return
-            }
+                  let thumbURL = URL(string: thumbStr) else { return }
             URLSession.shared.dataTask(with: thumbURL) { [weak self] imgData, _, _ in
                 guard let imgData, let img = NSImage(data: imgData) else { return }
-                DispatchQueue.main.async {
-                    NSLog("🖼️ Spotify 아트워크 수신 성공")
-                    self?.artwork = img
-                }
+                DispatchQueue.main.async { self?.artwork = img }
             }.resume()
         }.resume()
     }
