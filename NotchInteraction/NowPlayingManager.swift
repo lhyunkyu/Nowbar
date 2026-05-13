@@ -58,7 +58,9 @@ class NowPlayingManager: ObservableObject {
     private var pollingTimer: Timer?
     private var positionTimer: Timer?
     private var browserTimer: Timer?
-    private var lastTrackID: String = ""
+    private var lastBrowserTrackID: String = ""
+    private var lastSpotifyTrackID: String = ""
+    private var lastMusicTrackID:   String = ""
     /// 브라우저 position 보간용 — JS 폴 직후 기록, 0.5s 타이머에서 경과 시간만큼 더함
     private var lastBrowserPositionDate: Date? = nil
 
@@ -296,17 +298,20 @@ class NowPlayingManager: ObservableObject {
     }
 
     /// 탭 제목에서 곡명/아티스트 파싱 (YouTube, YouTube Music, Spotify Web, SoundCloud)
-    /// videoState: JS 인젝션 결과 "isPlaying|currentTime|duration" (초기 position 힌트용)
+    /// videoState: JS 인젝션 결과 "isPlaying|currentTime|duration"
     private func parseBrowserTitle(_ tabTitle: String, url: String, videoState: String = "") {
-        // JS 파싱 — position 초기값 힌트 (isPlaying은 MediaRemote가 처리)
+        // JS가 주요 소스 (MR은 Spotify 세션 점유 시 Chrome 데이터 안 옴)
         let vsParts    = videoState.components(separatedBy: "|")
-        let jsTime:    Double? = vsParts.count >= 3 ? Double(vsParts[1]) : nil
-        let jsDur:     Double? = vsParts.count >= 3 ? Double(vsParts[2]) : nil
+        let jsHasData  = vsParts.count >= 3
+        let jsPlaying: Bool?   = jsHasData ? vsParts[0] == "1" : nil
+        let jsTime:    Double? = jsHasData ? Double(vsParts[1]) : nil
+        let jsDur:     Double? = jsHasData ? Double(vsParts[2]) : nil
+        // JS 없는 브라우저(Safari 등)는 MR 폴백 사용
+        let needsMR = !jsHasData
 
         // YouTube / YouTube Music
         if tabTitle.contains("YouTube") {
-            // isPlaying은 MediaRemote가 결정 — 현재 값 유지하며 MR 즉시 호출
-            let playing = tabTitle.first == "▶" ? true : self.isPlaying
+            let playing = jsPlaying ?? (tabTitle.first == "▶" ? true : self.isPlaying)
 
             var t = tabTitle
                 .replacingOccurrences(of: "▶ ", with: "")
@@ -331,8 +336,9 @@ class NowPlayingManager: ObservableObject {
             let parts   = cleaned.components(separatedBy: " - ")
             let song    = parts.first ?? cleaned
             let artist  = parts.count > 1 ? parts[1] : "Spotify"
-            let changed = updateBrowserState(title: song, artist: artist, isPlaying: self.isPlaying)
-            applyJSVideoState(jsTime: jsTime, jsDur: jsDur, needsMR: true)
+            let playing = jsPlaying ?? true
+            let changed = updateBrowserState(title: song, artist: artist, isPlaying: playing)
+            applyJSVideoState(jsTime: jsTime, jsDur: jsDur, needsMR: needsMR)
             if changed, let trackID = extractSpotifyTrackID(from: url) {
                 fetchSpotifyArtwork(trackID: trackID)
             }
@@ -347,8 +353,9 @@ class NowPlayingManager: ObservableObject {
             let parts  = t.components(separatedBy: " by ")
             let song   = parts.first ?? t
             let artist = parts.count > 1 ? parts[1] : "SoundCloud"
-            _ = updateBrowserState(title: song, artist: artist, isPlaying: self.isPlaying)
-            applyJSVideoState(jsTime: jsTime, jsDur: jsDur, needsMR: true)
+            let playing = jsPlaying ?? true
+            _ = updateBrowserState(title: song, artist: artist, isPlaying: playing)
+            applyJSVideoState(jsTime: jsTime, jsDur: jsDur, needsMR: needsMR)
             enqueue(source: .browser, title: song, artist: artist, artwork: artwork)
             return
         }
@@ -364,19 +371,21 @@ class NowPlayingManager: ObservableObject {
         if self.artist     != artist   { self.artist   = artist }
         if self.isPlaying  != isPlaying { self.isPlaying = isPlaying }
         self.source = .browser
-        guard trackID != lastTrackID else { return false }
-        lastTrackID = trackID
-        artwork     = nil
+        guard trackID != lastBrowserTrackID else { return false }
+        lastBrowserTrackID = trackID
+        artwork            = nil
         return true
     }
 
-    /// JS position/duration 힌트 적용 후 MediaRemote로 정확한 상태 즉시 갱신
+    /// JS position/duration 적용 + 보간 기준점 갱신
     private func applyJSVideoState(jsTime: Double?, jsDur: Double?, needsMR: Bool) {
-        // JS 값은 초기 힌트용 — 이후 MediaRemote가 덮어씀
-        if let ct = jsTime, ct.isFinite, ct >= 0 { position = ct }
+        if let ct = jsTime, ct.isFinite, ct >= 0 {
+            position = ct
+            lastBrowserPositionDate = Date()   // 보간 기준점
+        }
         if let dur = jsDur, dur.isFinite, dur > 0 { duration = dur }
-        // 항상 MR로 정확한 isPlaying + position 즉시 확인
-        fetchBrowserPositionMR()
+        // MR은 세션 점유 문제로 신뢰 불가 → JS가 없는 Safari 등에서만 참고용
+        if needsMR { fetchBrowserPositionMR() }
     }
 
     // MARK: - YouTube 썸네일 fetch
@@ -418,7 +427,7 @@ class NowPlayingManager: ObservableObject {
         title                   = ""
         artist                  = ""
         artwork                 = nil
-        lastTrackID             = ""
+        lastBrowserTrackID      = ""
         position                = 0
         duration                = 0
         lastBrowserPositionDate = nil
@@ -454,9 +463,6 @@ class NowPlayingManager: ObservableObject {
         let playing = state == "Playing" && !name.isEmpty
         let stopped = state == "Stopped" || name.isEmpty
 
-        // 브라우저에서 Spotify로 전환 시 브라우저 상태 클리어
-        if !name.isEmpty && source == .browser { lastTrackID = "" }
-
         if self.title     != name   { self.title   = name }
         if self.artist    != art    { self.artist  = art }
         if self.isPlaying != playing { self.isPlaying = playing }
@@ -471,15 +477,16 @@ class NowPlayingManager: ObservableObject {
 
         if stopped {
             lockNative(for: 1.5)
-            nativeAppIsActive = false
-            source            = .none
+            nativeAppIsActive  = false
+            lastSpotifyTrackID = ""
+            source             = .none
             tryRestoreFromQueue(stoppedSource: .spotify)
         } else {
             lockNative(for: 5)
-            if trackID != lastTrackID {
-                lastTrackID = trackID
-                artwork     = nil
-                position    = 0
+            if trackID != lastSpotifyTrackID {
+                lastSpotifyTrackID = trackID
+                artwork            = nil
+                position           = 0
                 fetchSpotifyArtwork(trackID: trackID)
             }
             enqueue(source: .spotify, title: name, artist: art, artwork: artwork)
@@ -498,9 +505,6 @@ class NowPlayingManager: ObservableObject {
         let playing = state == "Playing" && !name.isEmpty
         let stopped = state == "Stopped" || name.isEmpty
 
-        // 브라우저에서 Music으로 전환 시 브라우저 상태 클리어
-        if !name.isEmpty && source == .browser { lastTrackID = "" }
-
         if self.title     != name   { self.title   = name }
         if self.artist    != art    { self.artist  = art }
         if self.isPlaying != playing { self.isPlaying = playing }
@@ -508,7 +512,6 @@ class NowPlayingManager: ObservableObject {
 
         // Apple Music duration: 노티에 초 단위로 들어옴
         if let dur = info["Total Time"] as? Double {
-            // Total Time은 ms로 들어오는 경우도 있어 보정
             self.duration = dur > 100000 ? dur / 1000.0 : dur
         } else if let dur = info["PlaybackDuration"] as? Double {
             self.duration = dur
@@ -519,14 +522,15 @@ class NowPlayingManager: ObservableObject {
         if stopped {
             lockNative(for: 1.5)
             nativeAppIsActive = false
+            lastMusicTrackID  = ""
             source            = .none
             tryRestoreFromQueue(stoppedSource: .music)
         } else {
             lockNative(for: 5)
-            if trackID != lastTrackID {
-                lastTrackID = trackID
-                artwork     = nil
-                position    = 0
+            if trackID != lastMusicTrackID {
+                lastMusicTrackID = trackID
+                artwork          = nil
+                position         = 0
                 fetchArtworkAppleScript(app: "Music")
             }
             enqueue(source: .music, title: name, artist: art, artwork: artwork)
@@ -622,10 +626,10 @@ class NowPlayingManager: ObservableObject {
                 if self.artist    != artist { self.artist  = artist }
                 if self.isPlaying != playing { self.isPlaying = playing }
 
-                if playing && trackID != self.lastTrackID {
-                    self.lastTrackID = trackID
-                    self.artwork     = nil
-                    self.position    = 0
+                if playing && trackID != self.lastMusicTrackID {
+                    self.lastMusicTrackID = trackID
+                    self.artwork          = nil
+                    self.position         = 0
                     self.fetchArtworkAppleScript(app: "Music")
                 }
                 if self.source == .none && playing { self.source = .music }
@@ -730,8 +734,14 @@ class NowPlayingManager: ObservableObject {
 
     private func fetchPositionOnce() {
         if source == .browser {
-            // Chrome도 MediaRemote에 등록되어 있음 → 네이티브 앱과 동일하게 MR 사용
-            fetchBrowserPositionMR()
+            // MR은 Spotify 등 네이티브 앱이 세션을 점유하면 Chrome 데이터가 안 옴
+            // → JS가 준 마지막 position에서 경과 시간만큼 보간
+            guard isPlaying, let lastDate = lastBrowserPositionDate else { return }
+            let elapsed = Date().timeIntervalSince(lastDate)
+            let newPos  = position + elapsed
+            guard newPos.isFinite, duration <= 0 || newPos <= duration else { return }
+            position = newPos
+            lastBrowserPositionDate = Date()
             return
         }
         guard source != .none else { return }
