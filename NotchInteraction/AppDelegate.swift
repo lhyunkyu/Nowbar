@@ -35,6 +35,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         _ = NowPlayingManager.shared
         _ = PowerManager.shared
 
+        // NowBar 플러그인 등록 (추가 플러그인은 여기에 register 호출)
+        NowBarPluginManager.shared.register(MusicNowBarPlugin.shared)
+
         setupNotchBarWindow()
         setupNowBarWindow()
         setupSideBarWindow()
@@ -150,6 +153,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             .store(in: &cancellables)
 
+        // 활성 플러그인 수 변화 → 윈도우 높이 재계산 (축소 상태에서 다중 알약 쌓일 때)
+        NowBarPluginManager.shared.objectWillChange
+            .debounce(for: .milliseconds(16), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self, !NotchState.shared.isSideBarExpanded else { return }
+                self.resizeSideBarWindow(expanded: false)
+            }
+            .store(in: &cancellables)
+
         // 알약 표시 여부 변화 → 클릭 통과 토글
         // (알약 안 보일 땐 알림센터 등 아래 요소가 클릭되어야 함)
         NotchState.shared.$isSideBarRendered
@@ -160,13 +172,37 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             .store(in: &cancellables)
     }
 
-    /// 확장 상태에 따라 사이드바 윈도우 프레임 변경 (top 고정, 높이/너비 확장)
+    /// 확장 상태 + 활성 플러그인 수에 따라 사이드바 윈도우 프레임 동적 계산.
+    /// - 콜랩스: 알약 1개 → notchHeight(37), 2개 → 37 + (28+4), …
+    /// - 확장: 확장 알약(116) + 나머지 콜랩스 알약 + 상하 여백
     func resizeSideBarWindow(expanded: Bool) {
         guard let win = sideBarWindow, let screen = NSScreen.screens.first else { return }
-        let sf = screen.frame
-        let height = expanded ? sideBarExpandedHeight : notchHeight
-        let width  = expanded ? sideBarExpandedWidth  : sideBarCollapsedWidth
-        // top edge가 항상 화면 상단 = 노치 상단에 붙도록 y 계산
+        let sf      = screen.frame
+        let manager = NowBarPluginManager.shared
+        let active  = manager.activePlugins
+
+        let collapsedPillH: CGFloat = 28
+        let expandedPillH:  CGFloat = 116
+        let pillSpacing:    CGFloat = 4
+
+        let width: CGFloat = expanded ? sideBarExpandedWidth : sideBarCollapsedWidth
+
+        let height: CGFloat
+        if active.isEmpty {
+            height = notchHeight
+        } else if expanded {
+            // 상단 패딩 34 + 확장 알약 + 나머지 콜랩스 알약 + 하단 패딩 8
+            let otherCount = max(0, active.count - 1)
+            let contentH   = 34 + expandedPillH
+                           + CGFloat(otherCount) * (collapsedPillH + pillSpacing)
+            height = max(sideBarExpandedHeight, contentH + 8)
+        } else {
+            // 첫 알약은 notchHeight 안에 수직 중앙 정렬 → 추가 알약은 아래로 쌓임
+            let extraCount = max(0, active.count - 1)
+            height = notchHeight + CGFloat(extraCount) * (collapsedPillH + pillSpacing)
+        }
+
+        // top edge를 화면 상단(노치 상단)에 고정
         let newRect = NSRect(
             x: sf.width / 2 + notchHalfWidth + 8,
             y: sf.height - height,
@@ -206,14 +242,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 DispatchQueue.main.async { NotchState.shared.isExpanded = false }
             }
 
-            // 사이드바가 확장된 상태에서 사이드바 윈도우 외부 클릭 → 축소
+            // 사이드바가 확장된 상태에서 사이드바 윈도우 외부 클릭 → 전체 축소
             if NotchState.shared.isSideBarExpanded,
                let sideWin = self.sideBarWindow,
                !sideWin.frame.contains(mouse) {
                 DispatchQueue.main.async {
-                    withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
-                        NotchState.shared.isSideBarExpanded = false
-                    }
+                    NowBarPluginManager.shared.collapseAll()
                 }
             }
         }
@@ -225,9 +259,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                let sideWin = self.sideBarWindow,
                event.window !== sideWin {
                 DispatchQueue.main.async {
-                    withAnimation(.spring(response: 0.42, dampingFraction: 0.78)) {
-                        NotchState.shared.isSideBarExpanded = false
-                    }
+                    NowBarPluginManager.shared.collapseAll()
                 }
             }
             return event

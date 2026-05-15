@@ -21,6 +21,10 @@
 		A012 /* NotifRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B012 /* NotifRow.swift */; };
 		A013 /* AlertWindowManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B013 /* AlertWindowManager.swift */; };
 		A014 /* AlertPopupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B014 /* AlertPopupView.swift */; };
+		E3474AD12FB6C66600E2F4E2 /* NowBarPillView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3474ACE2FB6C66600E2F4E2 /* NowBarPillView.swift */; };
+		E3474AD22FB6C66600E2F4E2 /* MusicNowBarPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3474ACD2FB6C66600E2F4E2 /* MusicNowBarPlugin.swift */; };
+		E3474AD32FB6C66600E2F4E2 /* NowBarPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3474ACF2FB6C66600E2F4E2 /* NowBarPlugin.swift */; };
+		E3474AD42FB6C66600E2F4E2 /* SideBarContainerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3474AD02FB6C66600E2F4E2 /* SideBarContainerView.swift */; };
 		E3D993E32FA08C63007A336C /* SideBarComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3D993E22FA08C63007A336C /* SideBarComponents.swift */; };
 		E3D993E52FA08C72007A336C /* ExpandedNowBarContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3D993E42FA08C72007A336C /* ExpandedNowBarContent.swift */; };
 		E3F72F672FA04B930061D5E4 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3F72F662FA04B930061D5E4 /* SettingsView.swift */; };
@@ -43,6 +47,10 @@
 		B013 /* AlertWindowManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertWindowManager.swift; sourceTree = "<group>"; };
 		B014 /* AlertPopupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertPopupView.swift; sourceTree = "<group>"; };
 		B015 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		E3474ACD2FB6C66600E2F4E2 /* MusicNowBarPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicNowBarPlugin.swift; sourceTree = "<group>"; };
+		E3474ACE2FB6C66600E2F4E2 /* NowBarPillView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowBarPillView.swift; sourceTree = "<group>"; };
+		E3474ACF2FB6C66600E2F4E2 /* NowBarPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowBarPlugin.swift; sourceTree = "<group>"; };
+		E3474AD02FB6C66600E2F4E2 /* SideBarContainerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SideBarContainerView.swift; sourceTree = "<group>"; };
 		E3D993E22FA08C63007A336C /* SideBarComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SideBarComponents.swift; sourceTree = "<group>"; };
 		E3D993E42FA08C72007A336C /* ExpandedNowBarContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExpandedNowBarContent.swift; sourceTree = "<group>"; };
 		E3DD41FF2F8E84FC00DB655E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -79,6 +87,10 @@
 				B004 /* NowBarOverlayView.swift */,
 				B005 /* NowPlayingManager.swift */,
 				B006 /* SideBarNowPlayingView.swift */,
+				E3474ACD2FB6C66600E2F4E2 /* MusicNowBarPlugin.swift */,
+				E3474ACE2FB6C66600E2F4E2 /* NowBarPillView.swift */,
+				E3474ACF2FB6C66600E2F4E2 /* NowBarPlugin.swift */,
+				E3474AD02FB6C66600E2F4E2 /* SideBarContainerView.swift */,
 				E3D993E22FA08C63007A336C /* SideBarComponents.swift */,
 				E3D993E42FA08C72007A336C /* ExpandedNowBarContent.swift */,
 				B007 /* HapticManager.swift */,
@@ -173,6 +185,10 @@
 				E3D993E52FA08C72007A336C /* ExpandedNowBarContent.swift in Sources */,
 				E3F72F672FA04B930061D5E4 /* SettingsView.swift in Sources */,
 				A001 /* NotchInteractionApp.swift in Sources */,
+				E3474AD12FB6C66600E2F4E2 /* NowBarPillView.swift in Sources */,
+				E3474AD22FB6C66600E2F4E2 /* MusicNowBarPlugin.swift in Sources */,
+				E3474AD32FB6C66600E2F4E2 /* NowBarPlugin.swift in Sources */,
+				E3474AD42FB6C66600E2F4E2 /* SideBarContainerView.swift in Sources */,
 				E3D993E32FA08C63007A336C /* SideBarComponents.swift in Sources */,
 				A002 /* AppDelegate.swift in Sources */,
 				A003 /* NotchState.swift in Sources */,
