@@ -20,18 +20,23 @@ struct NowBarPillView: View {
             if isExpanded {
                 expandedPill
                     .transition(.asymmetric(
-                        insertion: .scale(scale: 0.35, anchor: .topLeading).combined(with: .opacity),
-                        removal:   .scale(scale: 0.35, anchor: .topLeading).combined(with: .opacity)
+                        // 왼쪽 위 고정, 오른쪽·아래로 펼쳐짐
+                        insertion: .scale(scale: 0.12, anchor: .topLeading)
+                                    .combined(with: .opacity),
+                        // 닫힐 때 오른쪽·아래에서 왼쪽·위로 줄어듦
+                        removal:   .scale(scale: 0.12, anchor: .topLeading)
+                                    .combined(with: .opacity)
                     ))
             } else {
                 collapsedPill
                     .transition(.asymmetric(
-                        insertion: .scale(scale: 0.6, anchor: .topLeading).combined(with: .opacity),
-                        removal:   .scale(scale: 0.6, anchor: .topLeading).combined(with: .opacity)
+                        insertion: .scale(scale: 0.75, anchor: .topLeading)
+                                    .combined(with: .opacity),
+                        removal:   .opacity
                     ))
             }
         }
-        .animation(.spring(response: 0.42, dampingFraction: 0.78), value: isExpanded)
+        .animation(.spring(response: 0.46, dampingFraction: 0.72), value: isExpanded)
     }
 
     // MARK: - 콜랩스 알약
@@ -54,7 +59,7 @@ struct NowBarPillView: View {
         plugin.makeExpandedView()
             .frame(width: expandedWidth, height: expandedHeight)
             .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-            .shadow(color: plugin.accentColor.opacity(0.7), radius: 8, x: 0, y: 4)
+            .shadow(color: plugin.accentColor.opacity(0.45), radius: 5, x: 0, y: 3)
             .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
             .onTapGesture { /* 알약 본체 탭 흡수 — 바깥 탭은 SideBarContainerView에서 처리 */ }
     }
