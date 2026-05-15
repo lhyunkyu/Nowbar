@@ -16,23 +16,20 @@ struct NowBarPillView: View {
     private var isExpanded: Bool { manager.expandedPluginID == plugin.id }
 
     var body: some View {
-        Group {
+        ZStack(alignment: .topLeading) {
+            // 콜랩스 알약: 항상 계층에 존재, 확장 시 독립적으로 페이드아웃
+            collapsedPill
+                .opacity(isExpanded ? 0 : 1)
+                .animation(.easeOut(duration: 0.14), value: isExpanded)
+
+            // 확장 알약: 왼쪽 위에서 오른쪽·아래로 펼쳐지고, 닫힐 때 반대로
             if isExpanded {
                 expandedPill
                     .transition(.asymmetric(
-                        // 왼쪽 위 고정, 오른쪽·아래로 펼쳐짐
                         insertion: .scale(scale: 0.12, anchor: .topLeading)
                                     .combined(with: .opacity),
-                        // 닫힐 때 오른쪽·아래에서 왼쪽·위로 줄어듦
                         removal:   .scale(scale: 0.12, anchor: .topLeading)
                                     .combined(with: .opacity)
-                    ))
-            } else {
-                collapsedPill
-                    .transition(.asymmetric(
-                        insertion: .scale(scale: 0.75, anchor: .topLeading)
-                                    .combined(with: .opacity),
-                        removal:   .opacity
                     ))
             }
         }
