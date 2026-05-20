@@ -237,8 +237,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let mouse = NSEvent.mouseLocation
             guard let screen = NSScreen.screens.first else { return }
             let sf = screen.frame
-            let notchRect = NSRect(x: sf.width / 2 - self.notchHalfWidth, y: sf.height - self.notchHeight, width: self.notchWidth, height: self.notchHeight)
-            if !notchRect.contains(mouse) {
+            let notchRect    = NSRect(x: sf.width / 2 - self.notchHalfWidth, y: sf.height - self.notchHeight, width: self.notchWidth, height: self.notchHeight)
+            let isInNowBar   = self.nowBarWindow?.frame.contains(mouse) ?? false
+            // 노치 영역 + 나우바 알약 영역 바깥 클릭 → 상세보기 닫기
+            if !notchRect.contains(mouse) && !isInNowBar {
                 DispatchQueue.main.async { NotchState.shared.isExpanded = false }
             }
 
@@ -271,19 +273,28 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let sf    = screen.frame
         let mouse = NSEvent.mouseLocation
 
-        // 노치 rect 안에 있을 때만 호버 활성화
-        // 노치 바로 아래 20pt까지 허용 (나우바 드롭다운 탐색 가능)
         let notchRect = NSRect(
             x: sf.width / 2 - notchHalfWidth,
-            y: sf.height - notchHeight,  // 아래로 20pt 여유
+            y: sf.height - notchHeight,
             width: notchWidth,
             height: notchHeight + 20
         )
 
-        let proximity: CGFloat = notchRect.contains(mouse) ? 1.0 : 0.0
+        let isOverNotch  = notchRect.contains(mouse)
+        let isOverNowBar = nowBarWindow?.frame.contains(mouse) ?? false
 
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
+            guard self != nil else { return }
+            let wasVisible = NotchState.shared.proximity > 0 || NotchState.shared.isExpanded
+
+            // 나우바 알약 영역 위에 있을 때도 proximity 유지 (사라지지 않도록)
+            let proximity: CGFloat = (isOverNotch || (isOverNowBar && wasVisible)) ? 1.0 : 0.0
             NotchState.shared.proximity = proximity
+
+            // 나우바 알약 위로 이동 → 상세보기 자동 전환
+            if isOverNowBar && wasVisible && !NotchState.shared.isExpanded {
+                NotchState.shared.isExpanded = true
+            }
         }
     }
 }

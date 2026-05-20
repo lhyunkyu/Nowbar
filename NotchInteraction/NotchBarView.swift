@@ -10,9 +10,12 @@ struct NotchBarView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Rectangle())
             .onTapGesture {
-                HapticManager.shared.playNowBarAppear()
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
-                    NotchState.shared.isExpanded.toggle()
+                // 호버로 이미 상세보기 전환되므로 탭은 닫기 전용
+                if NotchState.shared.isExpanded {
+                    HapticManager.shared.playNowBarDisappear()
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
+                        NotchState.shared.isExpanded = false
+                    }
                 }
             }
     }
