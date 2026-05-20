@@ -41,6 +41,7 @@ struct TickerText: View {
 
     private let gap: CGFloat = 32
     private var needsTicker: Bool { textWidth > maxWidth }
+    
     private var loopWidth: CGFloat { textWidth + gap }
     private var duration: Double   { Double(loopWidth) / 35.0 }
 
