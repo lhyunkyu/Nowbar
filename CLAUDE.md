@@ -118,6 +118,15 @@ expandedPillHeight:      116pt
 - `applicationShouldTerminateAfterLastWindowClosed` → `false` 반환 (창 닫아도 앱 유지)
 - Spotlight 캐시 갱신: `lsregister -kill -r -domain local -domain system -domain user`
 
+## 디자인 레퍼런스
+
+### 피그마 파일
+- **URL**: https://www.figma.com/design/IUlDCzxTDM2MWF6W2hNflU/Nowbar
+- **페이지 구성**:
+  - `mockup & icon` — 앱 목업 및 아이콘
+  - `Design System` — 디자인 시스템 (색상, 컴포넌트, 타이포그래피)
+- UI 작업 시 피그마 MCP로 디자인 컨텍스트를 먼저 확인하고 코드에 반영할 것
+
 ## 하지 말 것
 - `AlertWindowManager.shared.isVisible` 조건으로 나우바 숨기지 말 것 (항상 표시)
 - `MusicSource`를 `NowPlayingManager.MusicSource`로 쓰지 말 것 (top-level enum)
