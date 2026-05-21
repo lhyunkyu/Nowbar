@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 // MARK: - 말풍선 버블
 /// Figma: Design System > Bubble > Default
@@ -36,7 +37,7 @@ struct BubbleView: View {
         VStack(spacing: 0) {
             // 위 방향 삼각 포인터
             BubbleArrowShape()
-                .fill(Color.black.opacity(0.70))
+                .fill(Color.black.opacity(0.55))
                 .frame(width: 14, height: 11)
 
             // 말풍선 본체
@@ -48,7 +49,10 @@ struct BubbleView: View {
                 .padding(.vertical, 9)
                 .frame(minWidth: 140)
                 .background(
-                    Capsule().fill(Color.black.opacity(0.70))
+                    ZStack {
+                        BubbleBlurBackground().clipShape(Capsule())
+                        Capsule().fill(Color.black.opacity(0.55))
+                    }
                 )
         }
         // 위에서 아래로 뽈롱: .top 앵커에서 scale + 살짝 위 offset에서 등장
@@ -142,6 +146,18 @@ struct BubbleView: View {
         }
         completion?()
     }
+}
+
+// MARK: - 백드롭 블러 (NSVisualEffectView 래핑)
+private struct BubbleBlurBackground: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let v = NSVisualEffectView()
+        v.material     = .hudWindow      // 어두운 반투명 소재
+        v.blendingMode = .behindWindow   // 뒤 콘텐츠 블러
+        v.state        = .active
+        return v
+    }
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
 
 // MARK: - 삼각 포인터 Shape (끝부분 둥글게)
