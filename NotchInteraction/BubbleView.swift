@@ -18,9 +18,13 @@ struct BubbleView: View {
     @Binding var isShowing: Bool
     /// nil → 글씨 길이 / 3 초 (최소 1.2초), 0 → 무한 유지
     var duration: Double? = nil
+    /// true → 표시 중 통통 바운스 애니메이션 활성 (기본값 true)
+    var bouncing: Bool = true
 
-    @State private var isVisible:  Bool = false
-    @State private var hideTask:   DispatchWorkItem? = nil
+    @State private var isVisible:   Bool    = false
+    @State private var hideTask:    DispatchWorkItem? = nil
+    @State private var bounceY:     CGFloat = 0
+    @State private var bounceToken: UUID    = UUID()
 
     // 글씨 길이 기반 자동 지속 시간 (0 = 무한)
     private var autoDuration: Double {
@@ -49,7 +53,7 @@ struct BubbleView: View {
         }
         // 위에서 아래로 뽈롱: .top 앵커에서 scale + 살짝 위 offset에서 등장
         .scaleEffect(isVisible ? 1.0 : 0.2, anchor: .top)
-        .offset(y: isVisible ? 0 : -10)
+        .offset(y: (isVisible ? 0 : -10) + bounceY)
         .opacity(isVisible ? 1.0 : 0.0)
         .onAppear {
             if isShowing { animateIn() }
@@ -70,7 +74,47 @@ struct BubbleView: View {
         withAnimation(.spring(response: 0.40, dampingFraction: 0.52)) {
             isVisible = true
         }
+        // 등장 애니메이션 끝난 후 통통 바운스 시작 (bouncing == true 일 때만)
+        if bouncing {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                startBounce()
+            }
+        }
         scheduleHide()
+    }
+
+    // MARK: - 바운스 시작
+    private func startBounce() {
+        let token = UUID()
+        bounceToken = token
+        runBounceLoop(token: token)
+    }
+
+    private func runBounceLoop(token: UUID) {
+        guard token == bounceToken, isVisible else { return }
+        // 아래로 딱 내려가기
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.30)) {
+            bounceY = 7
+        }
+        // 다시 바닥으로 탁 내려오기
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) {
+            guard token == bounceToken else { return }
+            withAnimation(.spring(response: 0.22, dampingFraction: 0.30)) {
+                bounceY = 0
+            }
+            // 잠깐 쉬고 반복
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.60) {
+                runBounceLoop(token: token)
+            }
+        }
+    }
+
+    // MARK: - 바운스 정지
+    private func stopBounce() {
+        bounceToken = UUID() // 루프 무효화
+        var t = Transaction()
+        t.disablesAnimations = true
+        withTransaction(t) { bounceY = 0 }
     }
 
     // MARK: - 자동 퇴장 스케줄
@@ -91,6 +135,7 @@ struct BubbleView: View {
     // MARK: - 퇴장
     private func animateOut(completion: (() -> Void)?) {
         hideTask?.cancel()
+        stopBounce()
         // 뽈롱 퇴장: 위로 쏙 들어가는 느낌
         withAnimation(.spring(response: 0.30, dampingFraction: 0.58)) {
             isVisible = false
