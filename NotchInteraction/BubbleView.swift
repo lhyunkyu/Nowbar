@@ -16,15 +16,16 @@ import SwiftUI
 struct BubbleView: View {
     let text: String
     @Binding var isShowing: Bool
-    /// nil → 글씨 길이 / 3 초 (최소 1.2초)
+    /// nil → 글씨 길이 / 3 초 (최소 1.2초), 0 → 무한 유지
     var duration: Double? = nil
 
     @State private var isVisible:  Bool = false
     @State private var hideTask:   DispatchWorkItem? = nil
 
-    // 글씨 길이 기반 자동 지속 시간
+    // 글씨 길이 기반 자동 지속 시간 (0 = 무한)
     private var autoDuration: Double {
-        duration ?? max(1.2, Double(text.count) / 3.0)
+        if let d = duration { return d }
+        return max(1.2, Double(text.count) / 3.0)
     }
 
     var body: some View {
@@ -32,16 +33,16 @@ struct BubbleView: View {
             // 위 방향 삼각 포인터
             BubbleArrowShape()
                 .fill(Color.black.opacity(0.70))
-                .frame(width: 12, height: 10)
+                .frame(width: 14, height: 11)
 
             // 말풍선 본체
             Text(text)
-                .font(.system(size: 12, weight: .regular))
+                .font(.system(size: 13, weight: .regular))
                 .foregroundColor(.white)
                 .lineLimit(1)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 4)
-                .frame(minWidth: 122)
+                .padding(.horizontal, 22)
+                .padding(.vertical, 9)
+                .frame(minWidth: 140)
                 .background(
                     Capsule().fill(Color.black.opacity(0.70))
                 )
@@ -74,9 +75,10 @@ struct BubbleView: View {
 
     // MARK: - 자동 퇴장 스케줄
     private func scheduleHide() {
+        // duration == 0 이면 무한 유지 (isShowing = false 로 직접 닫아야 함)
+        guard autoDuration > 0 else { return }
         let task = DispatchWorkItem { [self] in
             animateOut {
-                // 애니메이션 끝난 뒤 isShowing 동기화
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                     isShowing = false
                 }
@@ -97,13 +99,19 @@ struct BubbleView: View {
     }
 }
 
-// MARK: - 삼각 포인터 Shape
+// MARK: - 삼각 포인터 Shape (끝부분 둥글게)
 private struct BubbleArrowShape: Shape {
     func path(in rect: CGRect) -> Path {
         var p = Path()
-        p.move(to: CGPoint(x: rect.midX, y: rect.minY))    // 꼭짓점 (위)
-        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY)) // 오른쪽 아래
-        p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY)) // 왼쪽 아래
+        let tipRadius:   CGFloat = 4
+        let tip         = CGPoint(x: rect.midX, y: rect.minY)
+        let bottomLeft  = CGPoint(x: rect.minX, y: rect.maxY)
+        let bottomRight = CGPoint(x: rect.maxX, y: rect.maxY)
+
+        p.move(to: bottomLeft)
+        // 왼쪽 아래 → 꼭짓점(둥글게) → 오른쪽 아래
+        p.addArc(tangent1End: tip, tangent2End: bottomRight, radius: tipRadius)
+        p.addLine(to: bottomRight)
         p.closeSubpath()
         return p
     }

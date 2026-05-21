@@ -292,7 +292,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NotchState.shared.proximity = proximity
 
             // 나우바 알약 위로 이동 → 상세보기 자동 전환
-            if isOverNowBar && wasVisible && !NotchState.shared.isExpanded {
+            // isOverNotch 제외: 노치 영역과 nowBarWindow가 겹치는 구간에서 동시 트리거 방지
+            if isOverNowBar && !isOverNotch && wasVisible && !NotchState.shared.isExpanded {
                 NotchState.shared.isExpanded = true
             }
         }
