@@ -10,6 +10,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var mouseMonitor: Any?
     var clickMonitor: Any?
     var localClickMonitor: Any?
+    var keyboardMonitor: Any?
     private var cancellables = Set<AnyCancellable>()
 
     // 메뉴바 아이콘
@@ -59,6 +60,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let m = mouseMonitor      { NSEvent.removeMonitor(m) }
         if let m = clickMonitor      { NSEvent.removeMonitor(m) }
         if let m = localClickMonitor { NSEvent.removeMonitor(m) }
+        if let m = keyboardMonitor   { NSEvent.removeMonitor(m) }
     }
 
     func requestAccessibilityIfNeeded() {
@@ -265,6 +267,34 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
             return event
+        }
+
+        // MARK: - 상세보기 키보드 단축키
+        // isExpanded 상태일 때만 가로채서 음악 컨트롤에 사용
+        keyboardMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
+            guard NotchState.shared.isExpanded else { return }
+            let np = NowPlayingManager.shared
+            switch event.keyCode {
+            case 49: // Space — 재생/일시정지
+                DispatchQueue.main.async { np.playPause() }
+            case 123: // ← 왼쪽 화살표 — 5초 뒤로 (초반이면 이전 트랙)
+                DispatchQueue.main.async {
+                    if np.position > 3 {
+                        np.seek(to: max(0, np.position - 5))
+                    } else {
+                        np.previousTrack()
+                    }
+                }
+            case 124: // → 오른쪽 화살표 — 5초 앞으로
+                DispatchQueue.main.async {
+                    guard np.duration > 0 else { return }
+                    np.seek(to: min(np.duration, np.position + 5))
+                }
+            case 53: // Escape — 상세보기 닫기
+                DispatchQueue.main.async { NotchState.shared.isExpanded = false }
+            default:
+                break
+            }
         }
     }
 
