@@ -10,7 +10,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var mouseMonitor: Any?
     var clickMonitor: Any?
     var localClickMonitor: Any?
-    var keyboardMonitor: Any?
+    // NSEvent global monitor 대신 CGEventTap 사용 (LSUIElement 앱에서 keyDown 안정적 수신)
+    private var eventTap: CFMachPort?
+    private var tapRunLoopSource: CFRunLoopSource?
     private var cancellables = Set<AnyCancellable>()
 
     // 메뉴바 아이콘
@@ -60,7 +62,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let m = mouseMonitor      { NSEvent.removeMonitor(m) }
         if let m = clickMonitor      { NSEvent.removeMonitor(m) }
         if let m = localClickMonitor { NSEvent.removeMonitor(m) }
-        if let m = keyboardMonitor   { NSEvent.removeMonitor(m) }
+        teardownKeyboardEventTap()
     }
 
     func requestAccessibilityIfNeeded() {
@@ -125,10 +127,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let sf = screen.frame
         let shadowPad: CGFloat = 20
         let rect = NSRect(x: (sf.width - nowBarWidth) / 2, y: sf.height - notchHeight - nowBarHeight, width: nowBarWidth, height: nowBarHeight + shadowPad)
-        let win = makeWindow(rect: rect, ignoresMouse: true)
+        let win = makeWindow(rect: rect, ignoresMouse: true, keyable: true)
         win.contentView = NSHostingView(rootView: NowBarOverlayView())
         nowBarWindow = win
         win.orderFrontRegardless()
+
+        // 상세보기 확장 시 key window 획득 → 로컬 키 모니터로 단축키 수신
+        NotchState.shared.$isExpanded
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] expanded in
+                guard let self else { return }
+                if expanded {
+                    self.nowBarWindow?.makeKeyAndOrderFront(nil)
+                }
+            }
+            .store(in: &cancellables)
     }
 
     func setupSideBarWindow() {
@@ -214,9 +228,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         win.animator().setFrame(newRect, display: true, animate: true)
     }
 
-    private func makeWindow(rect: NSRect, ignoresMouse: Bool) -> NSWindow {
+    private func makeWindow(rect: NSRect, ignoresMouse: Bool, keyable: Bool = false) -> NSWindow {
         guard let screen = NSScreen.screens.first else { fatalError() }
-        let win = NSWindow(contentRect: rect, styleMask: [.borderless], backing: .buffered, defer: false, screen: screen)
+        let win: NSWindow = keyable
+            ? KeyableWindow(contentRect: rect, styleMask: [.borderless], backing: .buffered, defer: false, screen: screen)
+            : NSWindow(contentRect: rect, styleMask: [.borderless], backing: .buffered, defer: false, screen: screen)
         win.level              = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.maximumWindow)) + 1)
         win.backgroundColor    = .clear
         win.isOpaque           = false
@@ -269,33 +285,101 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return event
         }
 
-        // MARK: - 상세보기 키보드 단축키
-        // isExpanded 상태일 때만 가로채서 음악 컨트롤에 사용
-        keyboardMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
-            guard NotchState.shared.isExpanded else { return }
+        // MARK: - 상세보기 키보드 단축키 (로컬 모니터)
+        // nowBarWindow가 key window일 때(상세보기 확장 상태) 키 이벤트 처리
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, NotchState.shared.isExpanded else { return event }
             let np = NowPlayingManager.shared
             switch event.keyCode {
-            case 49: // Space — 재생/일시정지
-                DispatchQueue.main.async { np.playPause() }
-            case 123: // ← 왼쪽 화살표 — 5초 뒤로 (초반이면 이전 트랙)
-                DispatchQueue.main.async {
-                    if np.position > 3 {
-                        np.seek(to: max(0, np.position - 5))
-                    } else {
-                        np.previousTrack()
-                    }
+            case 49:  // Space — 재생/일시정지
+                np.playPause()
+                return nil
+            case 123: // ← 5초 뒤로 (곡 초반이면 이전 트랙)
+                if np.position > 3 {
+                    np.seek(to: max(0, np.position - 5))
+                } else {
+                    np.previousTrack()
                 }
-            case 124: // → 오른쪽 화살표 — 5초 앞으로
-                DispatchQueue.main.async {
-                    guard np.duration > 0 else { return }
-                    np.seek(to: min(np.duration, np.position + 5))
+                return nil
+            case 124: // → 5초 앞으로
+                if np.duration > 0 { np.seek(to: min(np.duration, np.position + 5)) }
+                return nil
+            case 53:  // Escape — 상세보기 닫기
+                NotchState.shared.isExpanded = false
+                return nil
+            default:
+                return event
+            }
+        }
+    }
+
+    // MARK: - CGEventTap 키보드 단축키
+    // NSEvent.addGlobalMonitorForEvents는 LSUIElement 앱에서 keyDown 수신 불안정.
+    // CGEventTap(.listenOnly)은 접근성 권한이 있으면 시스템 전역으로 안정적으로 수신.
+
+    /// CGEventTap 콜백 — @convention(c) 필요하므로 static으로 선언 (캡처 불가)
+    private static let keyTapCallback: CGEventTapCallBack = { _, type, event, _ in
+        guard type == .keyDown, NotchState.shared.isExpanded else {
+            return Unmanaged.passUnretained(event)
+        }
+        let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
+        DispatchQueue.main.async {
+            let np = NowPlayingManager.shared
+            switch keyCode {
+            case 49:  // Space — 재생/일시정지
+                np.playPause()
+            case 123: // ← 5초 뒤로 (곡 초반이면 이전 트랙)
+                if np.position > 3 {
+                    np.seek(to: max(0, np.position - 5))
+                } else {
+                    np.previousTrack()
                 }
-            case 53: // Escape — 상세보기 닫기
-                DispatchQueue.main.async { NotchState.shared.isExpanded = false }
+            case 124: // → 5초 앞으로
+                guard np.duration > 0 else { return }
+                np.seek(to: min(np.duration, np.position + 5))
+            case 53:  // Escape — 상세보기 닫기
+                NotchState.shared.isExpanded = false
             default:
                 break
             }
         }
+        return Unmanaged.passUnretained(event)
+    }
+
+    func setupKeyboardEventTap() {
+        guard AXIsProcessTrusted() else {
+            NSLog("⌨️ 접근성 권한 없음 — 키보드 단축키 비활성 (시스템 환경설정 > 손쉬운 사용 확인)")
+            return
+        }
+        let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+        guard let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .listenOnly,
+            eventsOfInterest: mask,
+            callback: AppDelegate.keyTapCallback,
+            userInfo: nil
+        ) else {
+            NSLog("⌨️ CGEventTap 생성 실패")
+            return
+        }
+        let src = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        CFRunLoopAddSource(CFRunLoopGetMain(), src, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+        eventTap = tap
+        tapRunLoopSource = src
+        NSLog("⌨️ 키보드 이벤트 탭 활성화")
+    }
+
+    func teardownKeyboardEventTap() {
+        if let tap = eventTap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            if let src = tapRunLoopSource {
+                CFRunLoopRemoveSource(CFRunLoopGetMain(), src, .commonModes)
+            }
+        }
+        eventTap = nil
+        tapRunLoopSource = nil
     }
 
     func updateProximity() {
@@ -328,4 +412,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
     }
+}
+
+// MARK: - Key Window 가능한 오버레이 윈도우
+// borderless NSWindow는 기본적으로 canBecomeKey = false.
+// NowBar 상세보기 확장 시 key window가 되어 로컬 키 모니터로 단축키를 받기 위해 서브클래스 사용.
+private class KeyableWindow: NSWindow {
+    override var canBecomeKey:  Bool { true }
+    override var canBecomeMain: Bool { true }
 }
