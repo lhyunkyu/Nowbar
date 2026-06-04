@@ -10,7 +10,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var mouseMonitor: Any?
     var clickMonitor: Any?
     var localClickMonitor: Any?
-    // NSEvent global monitor 대신 CGEventTap 사용 (LSUIElement 앱에서 keyDown 안정적 수신)
+    var localKeyboardMonitor: Any?
     private var eventTap: CFMachPort?
     private var tapRunLoopSource: CFRunLoopSource?
     private var cancellables = Set<AnyCancellable>()
@@ -59,9 +59,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        if let m = mouseMonitor      { NSEvent.removeMonitor(m) }
-        if let m = clickMonitor      { NSEvent.removeMonitor(m) }
-        if let m = localClickMonitor { NSEvent.removeMonitor(m) }
+        if let m = mouseMonitor         { NSEvent.removeMonitor(m) }
+        if let m = clickMonitor         { NSEvent.removeMonitor(m) }
+        if let m = localClickMonitor    { NSEvent.removeMonitor(m) }
+        if let m = localKeyboardMonitor { NSEvent.removeMonitor(m) }
         teardownKeyboardEventTap()
     }
 
@@ -132,17 +133,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         nowBarWindow = win
         win.orderFrontRegardless()
 
-        // 상세보기 확장 시 key window 획득 → 로컬 키 모니터로 단축키 수신
-        NotchState.shared.$isExpanded
-            .removeDuplicates()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] expanded in
-                guard let self else { return }
-                if expanded {
-                    self.nowBarWindow?.makeKeyAndOrderFront(nil)
-                }
-            }
-            .store(in: &cancellables)
+        // NowBar는 포커스를 가져가면 안 됨 — global monitor로 키 이벤트를 가로챔
     }
 
     func setupSideBarWindow() {
@@ -285,30 +276,34 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return event
         }
 
-        // MARK: - 상세보기 키보드 단축키 (로컬 모니터)
-        // nowBarWindow가 key window일 때(상세보기 확장 상태) 키 이벤트 처리
-        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, NotchState.shared.isExpanded else { return event }
+        // MARK: - 상세보기 키보드 단축키 (global monitor)
+        // NowBar는 포커스를 가져가지 않으므로 다른 앱에 향하는 이벤트를 global monitor로 감시.
+        // 반환값 저장 필수 — 저장 안 하면 ARC가 즉시 해제해서 한 번도 안 불림.
+        localKeyboardMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: NSEvent.EventTypeMask.keyDown
+        ) { event in
+            guard NotchState.shared.isSideBarExpanded else { return }
             let np = NowPlayingManager.shared
             switch event.keyCode {
             case 49:  // Space — 재생/일시정지
-                np.playPause()
-                return nil
+                DispatchQueue.main.async { np.playPause() }
             case 123: // ← 5초 뒤로 (곡 초반이면 이전 트랙)
-                if np.position > 3 {
-                    np.seek(to: max(0, np.position - 5))
-                } else {
-                    np.previousTrack()
+                DispatchQueue.main.async {
+                    if np.position > 3 {
+                        np.seek(to: max(0, np.position - 5))
+                    } else {
+                        np.previousTrack()
+                    }
                 }
-                return nil
             case 124: // → 5초 앞으로
-                if np.duration > 0 { np.seek(to: min(np.duration, np.position + 5)) }
-                return nil
-            case 53:  // Escape — 상세보기 닫기
-                NotchState.shared.isExpanded = false
-                return nil
+                DispatchQueue.main.async {
+                    guard np.duration > 0 else { return }
+                    np.seek(to: min(np.duration, np.position + 5))
+                }
+            case 53:  // Escape — 실시간 나우바 닫기
+                DispatchQueue.main.async { NowBarPluginManager.shared.collapseAll() }
             default:
-                return event
+                break
             }
         }
     }
