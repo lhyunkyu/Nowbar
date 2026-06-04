@@ -276,18 +276,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return event
         }
 
-        // MARK: - 상세보기 키보드 단축키 (global monitor)
-        // NowBar는 포커스를 가져가지 않으므로 다른 앱에 향하는 이벤트를 global monitor로 감시.
-        // 반환값 저장 필수 — 저장 안 하면 ARC가 즉시 해제해서 한 번도 안 불림.
+        // MARK: - 실시간 나우바 키보드 단축키 (global monitor)
         localKeyboardMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: NSEvent.EventTypeMask.keyDown
         ) { event in
+            // 🔍 모든 키 입력 로그 (모니터가 살아있는지 확인)
+            NSLog("⌨️ keyDown keyCode=\(event.keyCode) isSideBarExpanded=\(NotchState.shared.isSideBarExpanded)")
             guard NotchState.shared.isSideBarExpanded else { return }
             let np = NowPlayingManager.shared
             switch event.keyCode {
             case 49:  // Space — 재생/일시정지
+                NSLog("▶️ Space → playPause()")
                 DispatchQueue.main.async { np.playPause() }
             case 123: // ← 5초 뒤로 (곡 초반이면 이전 트랙)
+                NSLog("⏪ ← → seek -5s")
                 DispatchQueue.main.async {
                     if np.position > 3 {
                         np.seek(to: max(0, np.position - 5))
@@ -296,16 +298,32 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     }
                 }
             case 124: // → 5초 앞으로
+                NSLog("⏩ → → seek +5s")
                 DispatchQueue.main.async {
                     guard np.duration > 0 else { return }
                     np.seek(to: min(np.duration, np.position + 5))
                 }
             case 53:  // Escape — 실시간 나우바 닫기
+                NSLog("❌ Esc → collapseAll()")
                 DispatchQueue.main.async { NowBarPluginManager.shared.collapseAll() }
             default:
                 break
             }
         }
+        NSLog("⌨️ global keyboard monitor 등록: \(self.localKeyboardMonitor != nil ? "성공" : "실패")")
+
+        // CGEventTap — global monitor가 자기 앱 이벤트를 못 잡는 경우 보완
+        // 세션 레벨에서 모든 키 이벤트를 가로채므로 어떤 앱이 active든 동작함
+        setupKeyboardEventTap()
+
+        // 접근성 권한이 앱 실행 후 허용된 경우를 위해 사이드바 열릴 때마다 재시도
+        NotchState.shared.$isSideBarExpanded
+            .filter { $0 == true }
+            .sink { [weak self] _ in
+                guard let self, self.eventTap == nil else { return }
+                self.setupKeyboardEventTap()
+            }
+            .store(in: &cancellables)
     }
 
     // MARK: - CGEventTap 키보드 단축키
@@ -314,7 +332,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// CGEventTap 콜백 — @convention(c) 필요하므로 static으로 선언 (캡처 불가)
     private static let keyTapCallback: CGEventTapCallBack = { _, type, event, _ in
-        guard type == .keyDown, NotchState.shared.isExpanded else {
+        guard type == .keyDown, NotchState.shared.isSideBarExpanded else {
             return Unmanaged.passUnretained(event)
         }
         let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
@@ -332,8 +350,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             case 124: // → 5초 앞으로
                 guard np.duration > 0 else { return }
                 np.seek(to: min(np.duration, np.position + 5))
-            case 53:  // Escape — 상세보기 닫기
-                NotchState.shared.isExpanded = false
+            case 53:  // Escape — 실시간 나우바 닫기
+                NowBarPluginManager.shared.collapseAll()
             default:
                 break
             }
@@ -342,10 +360,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func setupKeyboardEventTap() {
-        guard AXIsProcessTrusted() else {
-            NSLog("⌨️ 접근성 권한 없음 — 키보드 단축키 비활성 (시스템 환경설정 > 손쉬운 사용 확인)")
-            return
-        }
+        guard eventTap == nil else { return } // 이미 등록됨
         let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
@@ -355,7 +370,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             callback: AppDelegate.keyTapCallback,
             userInfo: nil
         ) else {
-            NSLog("⌨️ CGEventTap 생성 실패")
+            NSLog("⌨️ CGEventTap 생성 실패 — 접근성 권한 필요 (시스템 설정 > 개인정보 보호 > 손쉬운 사용)")
             return
         }
         let src = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
@@ -363,7 +378,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         CGEvent.tapEnable(tap: tap, enable: true)
         eventTap = tap
         tapRunLoopSource = src
-        NSLog("⌨️ 키보드 이벤트 탭 활성화")
+        NSLog("⌨️ CGEventTap 활성화 완료")
     }
 
     func teardownKeyboardEventTap() {
